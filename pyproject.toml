@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keep-alive"
+version = "0.0.1"
+dependencies = [
+    "dateparser",
+]
+
+[tool.setuptools.packages]
+find = {}
+
+[project.scripts]
+keep-alive = "keep_alive.run:main"
