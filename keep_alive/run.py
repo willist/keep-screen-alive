@@ -29,6 +29,11 @@ def main():
 
     diff = (later - now).seconds
 
+    subprocess.run([
+        'killall',
+        'caffeinate',
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     subprocess.Popen([
         'caffeinate',
         '-d',
@@ -38,3 +43,7 @@ def main():
     ])
 
     print(f"Keeping alive until {later:%I:%M%p %Z, %b %d, %Y}")
+
+
+if __name__ == "__main__":
+    main()
