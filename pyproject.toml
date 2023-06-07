@@ -6,6 +6,16 @@ authors = ["Tim Willis"]
 license = "MIT"
 readme = "README.md"
 packages = [{include = "keep_alive"}]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"
