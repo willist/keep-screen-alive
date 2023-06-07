@@ -1,6 +1,7 @@
+## Summary
 A simple command line wrapper for [caffeinate](https://ss64.com/osx/caffeinate.html) on macOS that provides a forward looking relative datetime interface.
 
-Examples:
+## Examples
 
 ```bash
 $ date
