@@ -1,16 +1,19 @@
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
-
-[project]
+[tool.poetry]
 name = "keep-alive"
-version = "0.0.1"
-dependencies = [
-    "dateparser",
-]
+version = "0.0.2"
+description = "A tool to keep your machine from going to sleep for some amount of time"
+authors = ["Tim Willis"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "keep_alive"}]
 
-[tool.setuptools.packages]
-find = {}
+[tool.poetry.dependencies]
+python = "^3.11"
+dateparser = "^1.1.8"
 
-[project.scripts]
+[tool.poetry.scripts]
 keep-alive = "keep_alive.run:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
