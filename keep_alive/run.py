@@ -16,8 +16,9 @@ def main():
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        later = dateparser.parse(input_value, settings=parser_settings)
         now = dateparser.parse('now', settings=parser_settings)
+        parser_settings['RELATIVE_BASE'] = now
+        later = dateparser.parse(input_value, settings=parser_settings)
 
     if later is None:
         print("Missing a target")

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "keep-screen-alive"
-version = "0.0.2"
+version = "0.0.3"
 description = "A tool to keep your machine from going to sleep for some amount of time"
 authors = ["Tim Willis"]
 license = "MIT"
