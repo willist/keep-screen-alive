@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "keep-screen-alive"
-version = "0.0.3"
-description = "A tool to keep your machine from going to sleep for some amount of time"
+version = "0.0.4"
+description = "A thin wrapper around macos caffeinate to use a relative datetime"
 authors = ["Tim Willis"]
 license = "MIT"
 readme = "README.md"
