@@ -1,10 +1,96 @@
-import datetime
-import math
+import shutil
 import subprocess
 import sys
 import warnings
+from abc import ABC, abstractmethod
 
 import dateparser
+
+
+class InhibitorBackend(ABC):
+    """Abstract base class for screen wake inhibition backends."""
+
+    @classmethod
+    @abstractmethod
+    def available(cls) -> bool:
+        """Check if this backend is available on the current system."""
+        pass
+
+    @classmethod
+    @abstractmethod
+    def cleanup(cls) -> None:
+        """Clean up any existing inhibit processes."""
+        pass
+
+    @classmethod
+    @abstractmethod
+    def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
+        """Start inhibiting screen sleep for the given duration."""
+        pass
+
+
+class CaffeinateBackend(InhibitorBackend):
+    """macOS caffeinate backend."""
+
+    @classmethod
+    def available(cls) -> bool:
+        return shutil.which('caffeinate') is not None
+
+    @classmethod
+    def cleanup(cls) -> None:
+        subprocess.run([
+            'killall',
+            'caffeinate',
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    @classmethod
+    def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
+        return subprocess.Popen([
+            'caffeinate',
+            '-d',
+            '-u',
+            '-t',
+            str(duration_seconds),
+        ])
+
+
+class SystemdInhibitBackend(InhibitorBackend):
+    """Linux systemd-inhibit backend."""
+
+    @classmethod
+    def available(cls) -> bool:
+        return shutil.which('systemd-inhibit') is not None
+
+    @classmethod
+    def cleanup(cls) -> None:
+        # Don't kill existing processes - let them expire naturally
+        pass
+
+    @classmethod
+    def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
+        return subprocess.Popen([
+            'systemd-inhibit',
+            '--who=keep-alive',
+            '--why=Prevent screen sleep',
+            '--what=idle',
+            'sleep',
+            str(duration_seconds),
+        ])
+
+
+def get_backend() -> type[InhibitorBackend]:
+    """Detect and return the best available backend."""
+    backends = [
+        CaffeinateBackend,
+        SystemdInhibitBackend,
+    ]
+
+    for backend in backends:
+        if backend.available():
+            return backend
+
+    print("No suitable backend found. Please install caffeinate (macOS) or systemd-inhibit (Linux).")
+    sys.exit(1)
 
 
 def main():
@@ -30,18 +116,9 @@ def main():
 
     diff = (later - now).seconds
 
-    subprocess.run([
-        'killall',
-        'caffeinate',
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    subprocess.Popen([
-        'caffeinate',
-        '-d',
-        '-u',
-        '-t',
-        str(diff),
-    ])
+    backend = get_backend()
+    backend.cleanup()
+    backend.inhibit(diff)
 
     print(f"Keeping alive until {later:%I:%M%p %Z, %b %d, %Y}")
 

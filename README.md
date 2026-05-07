@@ -1,5 +1,7 @@
 ## Summary
-A simple command line wrapper for [caffeinate](https://ss64.com/osx/caffeinate.html) on macOS that provides a forward looking relative datetime interface.
+A cross-platform command line tool that keeps your screen awake using a forward looking relative datetime interface.
+
+On macOS, it uses [caffeinate](https://ss64.com/osx/caffeinate.html). On Linux, it uses systemd-inhibit.
 
 ## Install
 
