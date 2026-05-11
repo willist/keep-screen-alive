@@ -51,7 +51,7 @@ class CaffeinateBackend(InhibitorBackend):
             '-u',
             '-t',
             str(duration_seconds),
-        ])
+        ], start_new_session=True)
 
 
 class SystemdInhibitBackend(InhibitorBackend):
@@ -75,7 +75,7 @@ class SystemdInhibitBackend(InhibitorBackend):
             '--what=idle',
             'sleep',
             str(duration_seconds),
-        ])
+        ], start_new_session=True)
 
 
 def get_backend() -> type[InhibitorBackend]:
