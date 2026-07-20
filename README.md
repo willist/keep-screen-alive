@@ -24,3 +24,14 @@ Keeping alive until 12:00PM CDT, Jun 01, 2023
 $ keep-alive 7am
 Keeping alive until 07:00AM CDT, Jun 02, 2023
 ```
+
+## Development
+
+Install [Poetry](https://python-poetry.org/) and [pre-commit](https://pre-commit.com/), then:
+
+```bash
+poetry install
+pre-commit install
+```
+
+Run tests with `poetry run pytest`. Pre-commit hooks run ruff (lint and format) on commit; pytest runs as a pre-push hook. CI runs the same checks on pull requests and on push to `main`.
