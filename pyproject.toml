@@ -42,9 +42,6 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP"]
 
-[tool.ruff.format]
-quote-style = "single"
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
