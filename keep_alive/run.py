@@ -52,17 +52,22 @@ def _current_now():
 
 
 def _resolve_target(input_value: str, config: Config, now) -> object:
-    """Resolve the target datetime from an alias or a dateparser expression."""
-    if not input_value:
-        print("Missing a target")
-        sys.exit(1)
+    """Resolve the target datetime from an alias or a dateparser expression.
 
-    if input_value in config.aliases:
-        target = evaluate(config.aliases[input_value], now)
+    Empty input is treated as a bare invocation: global rules apply as
+    defaults, and the call exits with "Missing a target" only if no global
+    rule matches either.
+    """
+    if not input_value or input_value in config.aliases:
+        alias_rules = config.aliases.get(input_value, [])
+        target = evaluate(alias_rules, now)
         if target is None:
             target = evaluate(config.global_rules, now)
         if target is None:
-            print(f"no rule matched alias '{input_value}'")
+            if input_value:
+                print(f"no rule matched alias '{input_value}'")
+            else:
+                print("Missing a target")
             sys.exit(1)
         return target
 

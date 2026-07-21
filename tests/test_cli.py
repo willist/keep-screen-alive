@@ -115,11 +115,18 @@ class TestResolveTarget:
             run._resolve_target("banana", config, PINNED_NOW)
         assert "Missing a target" in capsys.readouterr().out
 
-    def test_empty_input_exits(self, capsys):
+    def test_empty_input_with_no_globals_exits(self, capsys):
         config = Config()
         with pytest.raises(SystemExit):
             run._resolve_target("", config, PINNED_NOW)
         assert "Missing a target" in capsys.readouterr().out
+
+    def test_empty_input_uses_global_rules(self):
+        config = Config(
+            global_rules=[_duration_rule(timedelta(minutes=30))],
+        )
+        target = run._resolve_target("", config, PINNED_NOW)
+        assert target == PINNED_NOW + timedelta(minutes=30)
 
 
 # ---------------------------------------------------------------------
