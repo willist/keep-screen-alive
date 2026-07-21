@@ -9,6 +9,8 @@ Known limitation: overnight windows (start > end) are not supported. A window
 of 22:00-02:00 will never match.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Literal
