@@ -295,7 +295,7 @@ class TestList:
         mock_config_loader["config"] = Config()
         self._run_main(monkeypatch, ["--list"])
         out = capsys.readouterr().out
-        assert out.strip() == "global (0 rules)"
+        assert out.strip() == "global"
         assert not mock_backend.inhibit.called
 
     def test_list_with_multiple_aliases(
@@ -303,35 +303,51 @@ class TestList:
     ):
         mock_config_loader["config"] = Config(
             aliases={
-                "work": [_duration_rule(timedelta(hours=2))],
+                "work": [
+                    Rule(
+                        condition=Condition(
+                            start=time(5, 0),
+                            end=time(16, 0),
+                            days={"Mon", "Tue", "Wed", "Thu", "Fri"},
+                        ),
+                        action=Action(kind="until_window_end"),
+                    ),
+                    Rule(
+                        condition=None,
+                        action=Action(kind="relative_duration", duration=timedelta(hours=2)),
+                    ),
+                ],
                 "personal": [
-                    _duration_rule(timedelta(hours=1)),
-                    _duration_rule(timedelta(hours=2)),
+                    Rule(
+                        condition=Condition(start=time(5, 0), end=time(19, 0)),
+                        action=Action(kind="absolute_time", time=time(16, 0)),
+                    ),
                 ],
             },
-            global_rules=[_duration_rule(timedelta(minutes=30))],
-        )
-        self._run_main(monkeypatch, ["--list"])
-        lines = capsys.readouterr().out.strip().splitlines()
-        # Aliases sorted alphabetically, global last
-        assert lines == [
-            "personal (2 rules)",
-            "work (1 rule)",
-            "global (1 rule)",
-        ]
-        assert not mock_backend.inhibit.called
-
-    def test_list_singular_rule_count(self, monkeypatch, capsys, mock_config_loader):
-        mock_config_loader["config"] = Config(
-            aliases={"solo": [_duration_rule(timedelta(hours=1))]},
+            global_rules=[
+                Rule(
+                    condition=None,
+                    action=Action(kind="relative_duration", duration=timedelta(minutes=30)),
+                )
+            ],
         )
         self._run_main(monkeypatch, ["--list"])
         out = capsys.readouterr().out
-        assert "solo (1 rule)" in out
-        assert "global (0 rules)" in out
+        # Aliases sorted alphabetically, global last. Each rule summarizes
+        # its condition and action on one indented line.
+        expected = (
+            "personal\n"
+            "  05:00-19:00 → at 16:00\n"
+            "work\n"
+            "  Mon, Tue, Wed, Thu, Fri 05:00-16:00 → until 16:00\n"
+            "  always → for 2h\n"
+            "global\n"
+            "  always → for 30m"
+        )
+        assert out.strip() == expected
+        assert not mock_backend.inhibit.called
 
     def test_list_respects_config_flag(self, monkeypatch, capsys, mock_backend, mock_now, tmp_path):
-        # Write a config to a temp file and verify --list --config PATH uses it.
         config_file = tmp_path / "test.toml"
         config_file.write_text(
             '[[alias]]\nname = "fromfile"\n'
@@ -340,8 +356,8 @@ class TestList:
         monkeypatch.setattr("sys.argv", ["keep-alive", "--list", "--config", str(config_file)])
         run.main()
         out = capsys.readouterr().out
-        assert "fromfile (1 rule)" in out
-        assert "global (0 rules)" in out
+        assert "fromfile" in out
+        assert "for 30m" in out
 
     def test_list_takes_precedence_over_input(
         self, monkeypatch, capsys, mock_backend, mock_config_loader
@@ -352,5 +368,78 @@ class TestList:
         )
         self._run_main(monkeypatch, ["--list", "work"])
         out = capsys.readouterr().out
-        assert "work (1 rule)" in out
+        assert "work" in out
+        assert "for 2h" in out
         assert not mock_backend.inhibit.called
+
+
+class TestListFormatting:
+    """Unit tests for the rule summarizers behind --list."""
+
+    @pytest.mark.parametrize(
+        "condition,expected",
+        [
+            (None, "always"),
+            (Condition(), "always"),
+            (Condition(start=time(9, 0), end=time(17, 0)), "09:00-17:00"),
+            (Condition(start=time(9, 0)), "from 09:00"),
+            (Condition(end=time(17, 0)), "until 17:00"),
+            (Condition(days={"Mon", "Tue", "Wed"}), "Mon, Tue, Wed"),
+            (
+                Condition(
+                    start=time(5, 0),
+                    end=time(16, 0),
+                    days={"Mon", "Tue", "Wed", "Thu", "Fri"},
+                ),
+                "Mon, Tue, Wed, Thu, Fri 05:00-16:00",
+            ),
+            (
+                Condition(days={"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}),
+                "daily",
+            ),
+        ],
+    )
+    def test_format_condition(self, condition, expected):
+        assert run._format_condition(condition) == expected
+
+    @pytest.mark.parametrize(
+        "action,condition,expected",
+        [
+            (
+                Action(kind="relative_duration", duration=timedelta(hours=2)),
+                None,
+                "for 2h",
+            ),
+            (
+                Action(kind="absolute_time", time=time(16, 0)),
+                None,
+                "at 16:00",
+            ),
+            (
+                Action(kind="until_window_end"),
+                Condition(start=time(9, 0), end=time(17, 0)),
+                "until 17:00",
+            ),
+            (
+                Action(kind="extend_window", duration=timedelta(hours=1)),
+                Condition(start=time(9, 0), end=time(17, 0)),
+                "until 17:00 + 1h",
+            ),
+        ],
+    )
+    def test_format_action(self, action, condition, expected):
+        assert run._format_action(action, condition) == expected
+
+    @pytest.mark.parametrize(
+        "td,expected",
+        [
+            (timedelta(0), "0m"),
+            (timedelta(minutes=30), "30m"),
+            (timedelta(hours=2), "2h"),
+            (timedelta(hours=1, minutes=30), "1h30m"),
+            (timedelta(days=1), "1d"),
+            (timedelta(days=1, hours=2, minutes=15), "1d2h15m"),
+        ],
+    )
+    def test_format_duration(self, td, expected):
+        assert run._format_duration(td) == expected
