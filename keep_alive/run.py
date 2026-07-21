@@ -18,6 +18,9 @@ _PARSER_SETTINGS = {
 def main():
     args = _parse_args(sys.argv[1:])
     config = _load_config_or_exit(args.config)
+    if args.list:
+        _list_config(config)
+        return
     now = _current_now()
     input_value = " ".join(args.input)
     target = _resolve_target(input_value, config, now)
@@ -32,9 +35,24 @@ def _parse_args(argv):
     )
     parser.add_argument("input", nargs="*", help="alias name from config, or datetime expression")
     parser.add_argument(
-        "--config", help="path to config file (default: $XDG_CONFIG_HOME/keep-alive/config.toml)"
+        "--config",
+        help="path to config file (default: $XDG_CONFIG_HOME/keep-alive/config.toml)",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="list configured aliases and exit",
     )
     return parser.parse_args(argv)
+
+
+def _list_config(config: Config) -> None:
+    """Print configured aliases and global rule count, then return."""
+    for name in sorted(config.aliases):
+        count = len(config.aliases[name])
+        print(f"{name} ({count} {'rule' if count == 1 else 'rules'})")
+    global_count = len(config.global_rules)
+    print(f"global ({global_count} {'rule' if global_count == 1 else 'rules'})")
 
 
 def _load_config_or_exit(path: str | None) -> Config:

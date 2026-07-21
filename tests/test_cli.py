@@ -279,3 +279,78 @@ class TestConfigFlag:
         monkeypatch.setattr("sys.argv", ["keep-alive", "2h"])
         run.main()
         assert captured["path"] is None
+
+
+# ---------------------------------------------------------------------
+# --list command
+# ---------------------------------------------------------------------
+
+
+class TestList:
+    def _run_main(self, monkeypatch, argv):
+        monkeypatch.setattr("sys.argv", ["keep-alive"] + argv)
+        run.main()
+
+    def test_list_with_empty_config(self, monkeypatch, capsys, mock_backend, mock_config_loader):
+        mock_config_loader["config"] = Config()
+        self._run_main(monkeypatch, ["--list"])
+        out = capsys.readouterr().out
+        assert out.strip() == "global (0 rules)"
+        assert not mock_backend.inhibit.called
+
+    def test_list_with_multiple_aliases(
+        self, monkeypatch, capsys, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config(
+            aliases={
+                "work": [_duration_rule(timedelta(hours=2))],
+                "personal": [
+                    _duration_rule(timedelta(hours=1)),
+                    _duration_rule(timedelta(hours=2)),
+                ],
+            },
+            global_rules=[_duration_rule(timedelta(minutes=30))],
+        )
+        self._run_main(monkeypatch, ["--list"])
+        lines = capsys.readouterr().out.strip().splitlines()
+        # Aliases sorted alphabetically, global last
+        assert lines == [
+            "personal (2 rules)",
+            "work (1 rule)",
+            "global (1 rule)",
+        ]
+        assert not mock_backend.inhibit.called
+
+    def test_list_singular_rule_count(self, monkeypatch, capsys, mock_config_loader):
+        mock_config_loader["config"] = Config(
+            aliases={"solo": [_duration_rule(timedelta(hours=1))]},
+        )
+        self._run_main(monkeypatch, ["--list"])
+        out = capsys.readouterr().out
+        assert "solo (1 rule)" in out
+        assert "global (0 rules)" in out
+
+    def test_list_respects_config_flag(self, monkeypatch, capsys, mock_backend, mock_now, tmp_path):
+        # Write a config to a temp file and verify --list --config PATH uses it.
+        config_file = tmp_path / "test.toml"
+        config_file.write_text(
+            '[[alias]]\nname = "fromfile"\n'
+            '[[alias.rule]]\naction = "relative_duration"\nduration = "30m"\n'
+        )
+        monkeypatch.setattr("sys.argv", ["keep-alive", "--list", "--config", str(config_file)])
+        run.main()
+        out = capsys.readouterr().out
+        assert "fromfile (1 rule)" in out
+        assert "global (0 rules)" in out
+
+    def test_list_takes_precedence_over_input(
+        self, monkeypatch, capsys, mock_backend, mock_config_loader
+    ):
+        # --list with a positional input should list, not resolve
+        mock_config_loader["config"] = Config(
+            aliases={"work": [_duration_rule(timedelta(hours=2))]},
+        )
+        self._run_main(monkeypatch, ["--list", "work"])
+        out = capsys.readouterr().out
+        assert "work (1 rule)" in out
+        assert not mock_backend.inhibit.called
