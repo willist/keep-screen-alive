@@ -56,8 +56,7 @@ name = "personal"
     [[alias.rule]]
     start = "09:00"
     end = "21:00"
-    action = "absolute_time"
-    time = "21:00"
+    action = "until_window_end"
 
     [[alias.rule]]
     action = "relative_duration"
@@ -77,7 +76,7 @@ name = "project"
 
 ```
 personal
-  09:00-21:00 → at 21:00
+  09:00-21:00 → until 21:00
   always → for 1h
 project
   always → for 4h
