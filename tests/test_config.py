@@ -1,4 +1,6 @@
+import re
 from datetime import time, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -304,3 +306,36 @@ class TestActionKindCoverage:
         action = cfg.aliases["x"][0].action
         assert action.kind == kind
         assert getattr(action, attr) == expected
+
+
+class TestReadmeExample:
+    """The TOML example in README.md must load successfully."""
+
+    def _readme_toml(self):
+        readme = Path(__file__).parent.parent / "README.md"
+        text = readme.read_text()
+        # Grab the first ```toml ... ``` fenced block.
+        match = re.search(r"```toml\n(.*?)```", text, re.DOTALL)
+        assert match, "no TOML block found in README"
+        return match.group(1)
+
+    def test_readme_example_loads(self, tmp_path):
+        p = tmp_path / "readme.toml"
+        p.write_text(self._readme_toml())
+        cfg = load_config(p)
+        assert set(cfg.aliases) == {"work", "personal", "project"}
+        assert len(cfg.global_rules) == 1
+
+    def test_readme_example_work_alias_semantics(self, tmp_path):
+        p = tmp_path / "readme.toml"
+        p.write_text(self._readme_toml())
+        cfg = load_config(p)
+        # Work: first rule has window + until_window_end, second is relative fallback.
+        r1, r2 = cfg.aliases["work"]
+        assert r1.condition.start == time(5, 0)
+        assert r1.condition.end == time(16, 0)
+        assert r1.condition.days == {"Mon", "Tue", "Wed", "Thu", "Fri"}
+        assert r1.action.kind == "until_window_end"
+        assert r2.condition is None
+        assert r2.action.kind == "relative_duration"
+        assert r2.action.duration == timedelta(hours=2)
