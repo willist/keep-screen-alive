@@ -116,6 +116,11 @@ Install [Poetry](https://python-poetry.org/) and [pre-commit](https://pre-commit
 ```bash
 poetry install
 pre-commit install
+pre-commit install --hook-type commit-msg
 ```
 
-Run tests with `poetry run pytest`. Pre-commit hooks run ruff (lint and format) on commit; pytest runs as a pre-push hook. CI runs the same checks on pull requests and on push to `main`.
+Run tests with `poetry run pytest`. Pre-commit hooks run ruff (lint and format) on commit; the commit-msg hook verifies conventional commit format; pytest runs as a pre-push hook. CI runs the same checks on pull requests and on push to `main`.
+
+### Commit format
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/). PR titles must match - they become the squash-merge commit subject. Example: `feat: add systemd-inhibit backend`. Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. Subject max 72 chars. Scope optional: `fix(backends): handle missing caffeinate`.
