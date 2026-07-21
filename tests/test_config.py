@@ -323,7 +323,7 @@ class TestReadmeExample:
         p = tmp_path / "readme.toml"
         p.write_text(self._readme_toml())
         cfg = load_config(p)
-        assert set(cfg.aliases) == {"work", "personal"}
+        assert set(cfg.aliases) == {"work", "personal", "project"}
         assert len(cfg.global_rules) == 1
 
     def test_readme_example_work_alias_semantics(self, tmp_path):

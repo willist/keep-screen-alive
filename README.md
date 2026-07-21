@@ -54,24 +54,33 @@ name = "work"
 name = "personal"
 
     [[alias.rule]]
-    start = "05:00"
-    end = "19:00"
+    start = "09:00"
+    end = "21:00"
     action = "absolute_time"
-    time = "16:00"
+    time = "21:00"
 
     [[alias.rule]]
     action = "relative_duration"
     duration = "1h"
+
+[[alias]]
+name = "project"
+
+    [[alias.rule]]
+    action = "relative_duration"
+    duration = "4h"
 ```
 
-`keep-alive work` on a weekday between 5am and 4pm keeps awake until 4pm; otherwise it keeps awake for 2h. `keep-alive personal` resolves similarly against its own window (no `days` filter means daily). Bare `keep-alive` uses global rules.
+`keep-alive work` on a weekday between 5am and 4pm keeps awake until 4pm; otherwise for 2h. `keep-alive personal` between 9am and 9pm keeps awake until 9pm; otherwise for 1h. `keep-alive project` keeps awake for 4h unconditionally. Bare `keep-alive` uses global rules.
 
 `keep-alive --list` summarizes the loaded config:
 
 ```
 personal
-  05:00-19:00 → at 16:00
+  09:00-21:00 → at 21:00
   always → for 1h
+project
+  always → for 4h
 work
   Mon, Tue, Wed, Thu, Fri 05:00-16:00 → until 16:00
   always → for 2h
