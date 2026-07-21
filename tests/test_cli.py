@@ -279,3 +279,167 @@ class TestConfigFlag:
         monkeypatch.setattr("sys.argv", ["keep-alive", "2h"])
         run.main()
         assert captured["path"] is None
+
+
+# ---------------------------------------------------------------------
+# --list command
+# ---------------------------------------------------------------------
+
+
+class TestList:
+    def _run_main(self, monkeypatch, argv):
+        monkeypatch.setattr("sys.argv", ["keep-alive"] + argv)
+        run.main()
+
+    def test_list_with_empty_config(self, monkeypatch, capsys, mock_backend, mock_config_loader):
+        mock_config_loader["config"] = Config()
+        self._run_main(monkeypatch, ["--list"])
+        out = capsys.readouterr().out
+        assert out.strip() == "global"
+        assert not mock_backend.inhibit.called
+
+    def test_list_with_multiple_aliases(
+        self, monkeypatch, capsys, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config(
+            aliases={
+                "work": [
+                    Rule(
+                        condition=Condition(
+                            start=time(5, 0),
+                            end=time(16, 0),
+                            days={"Mon", "Tue", "Wed", "Thu", "Fri"},
+                        ),
+                        action=Action(kind="until_window_end"),
+                    ),
+                    Rule(
+                        condition=None,
+                        action=Action(kind="relative_duration", duration=timedelta(hours=2)),
+                    ),
+                ],
+                "personal": [
+                    Rule(
+                        condition=Condition(start=time(5, 0), end=time(19, 0)),
+                        action=Action(kind="absolute_time", time=time(16, 0)),
+                    ),
+                ],
+            },
+            global_rules=[
+                Rule(
+                    condition=None,
+                    action=Action(kind="relative_duration", duration=timedelta(minutes=30)),
+                )
+            ],
+        )
+        self._run_main(monkeypatch, ["--list"])
+        out = capsys.readouterr().out
+        # Aliases sorted alphabetically, global last. Each rule summarizes
+        # its condition and action on one indented line.
+        expected = (
+            "personal\n"
+            "  05:00-19:00 → at 16:00\n"
+            "work\n"
+            "  Mon, Tue, Wed, Thu, Fri 05:00-16:00 → until 16:00\n"
+            "  always → for 2h\n"
+            "global\n"
+            "  always → for 30m"
+        )
+        assert out.strip() == expected
+        assert not mock_backend.inhibit.called
+
+    def test_list_respects_config_flag(self, monkeypatch, capsys, mock_backend, mock_now, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text(
+            '[[alias]]\nname = "fromfile"\n'
+            '[[alias.rule]]\naction = "relative_duration"\nduration = "30m"\n'
+        )
+        monkeypatch.setattr("sys.argv", ["keep-alive", "--list", "--config", str(config_file)])
+        run.main()
+        out = capsys.readouterr().out
+        assert "fromfile" in out
+        assert "for 30m" in out
+
+    def test_list_takes_precedence_over_input(
+        self, monkeypatch, capsys, mock_backend, mock_config_loader
+    ):
+        # --list with a positional input should list, not resolve
+        mock_config_loader["config"] = Config(
+            aliases={"work": [_duration_rule(timedelta(hours=2))]},
+        )
+        self._run_main(monkeypatch, ["--list", "work"])
+        out = capsys.readouterr().out
+        assert "work" in out
+        assert "for 2h" in out
+        assert not mock_backend.inhibit.called
+
+
+class TestListFormatting:
+    """Unit tests for the rule summarizers behind --list."""
+
+    @pytest.mark.parametrize(
+        "condition,expected",
+        [
+            (None, "always"),
+            (Condition(), "always"),
+            (Condition(start=time(9, 0), end=time(17, 0)), "09:00-17:00"),
+            (Condition(start=time(9, 0)), "from 09:00"),
+            (Condition(end=time(17, 0)), "until 17:00"),
+            (Condition(days={"Mon", "Tue", "Wed"}), "Mon, Tue, Wed"),
+            (
+                Condition(
+                    start=time(5, 0),
+                    end=time(16, 0),
+                    days={"Mon", "Tue", "Wed", "Thu", "Fri"},
+                ),
+                "Mon, Tue, Wed, Thu, Fri 05:00-16:00",
+            ),
+            (
+                Condition(days={"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}),
+                "daily",
+            ),
+        ],
+    )
+    def test_format_condition(self, condition, expected):
+        assert run._format_condition(condition) == expected
+
+    @pytest.mark.parametrize(
+        "action,condition,expected",
+        [
+            (
+                Action(kind="relative_duration", duration=timedelta(hours=2)),
+                None,
+                "for 2h",
+            ),
+            (
+                Action(kind="absolute_time", time=time(16, 0)),
+                None,
+                "at 16:00",
+            ),
+            (
+                Action(kind="until_window_end"),
+                Condition(start=time(9, 0), end=time(17, 0)),
+                "until 17:00",
+            ),
+            (
+                Action(kind="extend_window", duration=timedelta(hours=1)),
+                Condition(start=time(9, 0), end=time(17, 0)),
+                "until 17:00 + 1h",
+            ),
+        ],
+    )
+    def test_format_action(self, action, condition, expected):
+        assert run._format_action(action, condition) == expected
+
+    @pytest.mark.parametrize(
+        "td,expected",
+        [
+            (timedelta(0), "0m"),
+            (timedelta(minutes=30), "30m"),
+            (timedelta(hours=2), "2h"),
+            (timedelta(hours=1, minutes=30), "1h30m"),
+            (timedelta(days=1), "1d"),
+            (timedelta(days=1, hours=2, minutes=15), "1d2h15m"),
+        ],
+    )
+    def test_format_duration(self, td, expected):
+        assert run._format_duration(td) == expected

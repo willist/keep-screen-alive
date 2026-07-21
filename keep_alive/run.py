@@ -18,6 +18,9 @@ _PARSER_SETTINGS = {
 def main():
     args = _parse_args(sys.argv[1:])
     config = _load_config_or_exit(args.config)
+    if args.list:
+        _list_config(config)
+        return
     now = _current_now()
     input_value = " ".join(args.input)
     target = _resolve_target(input_value, config, now)
@@ -32,9 +35,83 @@ def _parse_args(argv):
     )
     parser.add_argument("input", nargs="*", help="alias name from config, or datetime expression")
     parser.add_argument(
-        "--config", help="path to config file (default: $XDG_CONFIG_HOME/keep-alive/config.toml)"
+        "--config",
+        help="path to config file (default: $XDG_CONFIG_HOME/keep-alive/config.toml)",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="list configured aliases and exit",
     )
     return parser.parse_args(argv)
+
+
+def _list_config(config: Config) -> None:
+    """Print configured aliases with their rules, then return."""
+    for name in sorted(config.aliases):
+        print(name)
+        for rule in config.aliases[name]:
+            print(f"  {_format_rule(rule)}")
+    print("global")
+    for rule in config.global_rules:
+        print(f"  {_format_rule(rule)}")
+
+
+def _format_rule(rule) -> str:
+    when = _format_condition(rule.condition)
+    do = _format_action(rule.action, rule.condition)
+    return f"{when} → {do}"
+
+
+def _format_condition(condition) -> str:
+    if condition is None:
+        return "always"
+    parts = []
+    if condition.days is not None:
+        parts.append(_format_days(condition.days))
+    if condition.start is not None and condition.end is not None:
+        parts.append(f"{condition.start:%H:%M}-{condition.end:%H:%M}")
+    elif condition.start is not None:
+        parts.append(f"from {condition.start:%H:%M}")
+    elif condition.end is not None:
+        parts.append(f"until {condition.end:%H:%M}")
+    return " ".join(parts) if parts else "always"
+
+
+def _format_action(action, condition) -> str:
+    if action.kind == "relative_duration":
+        return f"for {_format_duration(action.duration)}"
+    if action.kind == "absolute_time":
+        return f"at {action.time:%H:%M}"
+    end_str = f"{condition.end:%H:%M}" if condition and condition.end else "?"
+    if action.kind == "until_window_end":
+        return f"until {end_str}"
+    if action.kind == "extend_window":
+        return f"until {end_str} + {_format_duration(action.duration)}"
+    return action.kind
+
+
+def _format_days(days) -> str:
+    if len(days) == 7:
+        return "daily"
+    order = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
+    sorted_days = sorted(days, key=lambda d: order[d])
+    return ", ".join(sorted_days)
+
+
+def _format_duration(td) -> str:
+    total = int(td.total_seconds())
+    days, remainder = divmod(total, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, _ = divmod(remainder, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    return "".join(parts) or "0m"
 
 
 def _load_config_or_exit(path: str | None) -> Config:
