@@ -1,0 +1,23 @@
+name: Autolabel PR
+
+# Applies conventional-commit labels to PRs based on title regex.
+# release-drafter itself only reads labels - it doesn't apply them.
+# This workflow must run on pull_request events so labels are in place
+# before the PR merges and the drafter scans it.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  autolabel:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: release-drafter/release-drafter/autolabeler@v7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
