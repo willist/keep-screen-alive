@@ -145,34 +145,38 @@ class DBusScreenSaverBackend(InhibitorBackend):
     suspend / DPMS. Only activates under KDE (XDG_CURRENT_DESKTOP=KDE) so
     it does not silently engage on GNOME, which has its own inhibit
     mechanism.
-    """
 
-    _HELPER_MODULE = "keep_alive._dbus_inhibit"
+    Availability is checked via the gdbus CLI tool so it works even when
+    the running Python lacks PyGObject (e.g. poetry venv, pipx). The
+    helper script runs under whatever Python has gi installed, found at
+    runtime by trying sys.executable then /usr/bin/python3.
+    """
 
     @classmethod
     def available(cls) -> bool:
         if "KDE" not in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":"):
             return False
+        gdbus = shutil.which("gdbus")
+        if gdbus is None:
+            return False
         try:
-            import gi
-
-            gi.require_version("Gio", "2.0")
-            from gi.repository import Gio, GLib
-
-            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-            reply = bus.call_sync(
-                "org.freedesktop.DBus",
-                "/org/freedesktop/DBus",
-                "org.freedesktop.DBus",
-                "ListNames",
-                None,
-                GLib.VariantType("(as)"),
-                Gio.DBusCallFlags.NONE,
-                -1,
-                None,
+            result = subprocess.run(
+                [
+                    gdbus,
+                    "call",
+                    "--session",
+                    "--dest",
+                    "org.freedesktop.DBus",
+                    "--object-path",
+                    "/org/freedesktop/DBus",
+                    "--method",
+                    "org.freedesktop.DBus.ListNames",
+                ],
+                capture_output=True,
+                timeout=5,
             )
-            return "org.freedesktop.ScreenSaver" in reply.unpack()[0]
-        except Exception:
+            return b"org.freedesktop.ScreenSaver" in result.stdout
+        except (OSError, subprocess.SubprocessError):
             return False
 
     @classmethod
@@ -181,12 +185,32 @@ class DBusScreenSaverBackend(InhibitorBackend):
 
     @classmethod
     def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
+        helper = Path(__file__).parent / "_dbus_inhibit.py"
         proc = subprocess.Popen(
-            [sys.executable, "-m", cls._HELPER_MODULE, str(duration_seconds)],
+            [cls._find_gi_python(), str(helper), str(duration_seconds)],
             start_new_session=True,
         )
         _write_pidfile(proc.pid)
         return proc
+
+    @staticmethod
+    def _find_gi_python() -> str:
+        """Find a Python executable with PyGObject, preferring sys.executable."""
+        for candidate in (sys.executable, "/usr/bin/python3"):
+            if not candidate or not os.path.isfile(candidate):
+                continue
+            try:
+                proc = subprocess.Popen(
+                    [candidate, "-c", "import gi"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                proc.wait(timeout=3)
+                if proc.returncode == 0:
+                    return candidate
+            except (OSError, subprocess.SubprocessError):
+                continue
+        return sys.executable
 
 
 def get_backend() -> type[InhibitorBackend]:
