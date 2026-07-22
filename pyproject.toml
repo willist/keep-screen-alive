@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "keep-screen-alive"
-version = "0.2.0"
+version = "0.2.1"
 description = "A cross-platform tool to keep your screen awake using a relative datetime"
 authors = ["Tim Willis"]
 license = "MIT"
