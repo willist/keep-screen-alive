@@ -1,6 +1,10 @@
 name-template: v$RESOLVED_VERSION
 tag-template: v$RESOLVED_VERSION
 
+# PRs with any of these labels are omitted from the changelog entirely.
+exclude-labels:
+  - internal
+
 categories:
   - title: Breaking changes
     label: breaking
@@ -22,6 +26,10 @@ autolabeler:
   - label: fix
     title:
       - '/^fix(\(.+\))?:(.+)?/'
+  - label: internal
+    title:
+      - '/^ci(\(.+\))?:(.+)?/'
+      - '/^chore(\(.+\))?:(.+)?/'
 
 version-resolver:
   major:
