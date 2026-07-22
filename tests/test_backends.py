@@ -1,4 +1,5 @@
 import signal
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -6,6 +7,7 @@ import pytest
 
 from keep_alive.backends import (
     CaffeinateBackend,
+    DBusScreenSaverBackend,
     SystemdInhibitBackend,
     _pidfile_path,
     get_backend,
@@ -18,6 +20,18 @@ def test_get_backend_prefers_caffeinate():
     assert result is CaffeinateBackend
 
 
+def test_get_backend_prefers_dbus_over_systemd():
+    def fake_which(cmd):
+        return "/usr/bin/systemd-inhibit" if cmd == "systemd-inhibit" else None
+
+    with (
+        patch("keep_alive.backends.shutil.which", side_effect=fake_which),
+        patch.object(DBusScreenSaverBackend, "available", return_value=True),
+    ):
+        result = get_backend()
+    assert result is DBusScreenSaverBackend
+
+
 def test_get_backend_falls_back_to_systemd():
     def fake_which(cmd):
         return "/usr/bin/systemd-inhibit" if cmd == "systemd-inhibit" else None
@@ -25,6 +39,21 @@ def test_get_backend_falls_back_to_systemd():
     with patch("keep_alive.backends.shutil.which", side_effect=fake_which):
         result = get_backend()
     assert result is SystemdInhibitBackend
+
+
+class TestDBusScreenSaverAvailable:
+    def test_false_when_not_kde(self, monkeypatch):
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", "GNOME")
+        assert DBusScreenSaverBackend.available() is False
+
+    def test_false_when_xdg_unset(self, monkeypatch):
+        monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+        assert DBusScreenSaverBackend.available() is False
+
+    def test_false_when_gi_missing(self, monkeypatch):
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+        monkeypatch.setitem(sys.modules, "gi", None)
+        assert DBusScreenSaverBackend.available() is False
 
 
 @pytest.fixture
@@ -35,9 +64,12 @@ def tmp_pidfile(tmp_path, monkeypatch):
     return fake_path
 
 
-@pytest.mark.parametrize("backend", [CaffeinateBackend, SystemdInhibitBackend])
+@pytest.mark.parametrize(
+    "backend",
+    [CaffeinateBackend, SystemdInhibitBackend, DBusScreenSaverBackend],
+)
 class TestPidfileTracking:
-    """Both backends share the same pidfile semantics - exercise them identically."""
+    """All backends share the same pidfile semantics - exercise them identically."""
 
     def test_inhibit_writes_pidfile(self, tmp_pidfile, backend):
         mock_proc = MagicMock(pid=12345)

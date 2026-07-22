@@ -104,7 +104,12 @@ class CaffeinateBackend(InhibitorBackend):
 
 
 class SystemdInhibitBackend(InhibitorBackend):
-    """Linux systemd-inhibit backend."""
+    """Linux systemd-inhibit backend.
+
+    Does not prevent KDE screen lock (kscreenlocker ignores logind idle
+    inhibitors), but remains useful as a headless fallback where no
+    graphical session exists.
+    """
 
     @classmethod
     def available(cls) -> bool:
@@ -131,10 +136,64 @@ class SystemdInhibitBackend(InhibitorBackend):
         return proc
 
 
+class DBusScreenSaverBackend(InhibitorBackend):
+    """KDE Plasma D-Bus backend using org.freedesktop.ScreenSaver.Inhibit.
+
+    Talks directly to kscreenlocker via the freedesktop ScreenSaver D-Bus
+    interface, which KDE respects (unlike systemd-logind idle inhibitors).
+    Also holds a PowerManagement.Inhibit cookie when available to cover
+    suspend / DPMS. Only activates under KDE (XDG_CURRENT_DESKTOP=KDE) so
+    it does not silently engage on GNOME, which has its own inhibit
+    mechanism.
+    """
+
+    _HELPER_MODULE = "keep_alive._dbus_inhibit"
+
+    @classmethod
+    def available(cls) -> bool:
+        if "KDE" not in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":"):
+            return False
+        try:
+            import gi
+
+            gi.require_version("Gio", "2.0")
+            from gi.repository import Gio, GLib
+
+            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            reply = bus.call_sync(
+                "org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+                "org.freedesktop.DBus",
+                "ListNames",
+                None,
+                GLib.VariantType("(as)"),
+                Gio.DBusCallFlags.NONE,
+                -1,
+                None,
+            )
+            return "org.freedesktop.ScreenSaver" in reply.unpack()[0]
+        except Exception:
+            return False
+
+    @classmethod
+    def cleanup(cls) -> None:
+        _kill_spawned()
+
+    @classmethod
+    def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", cls._HELPER_MODULE, str(duration_seconds)],
+            start_new_session=True,
+        )
+        _write_pidfile(proc.pid)
+        return proc
+
+
 def get_backend() -> type[InhibitorBackend]:
     """Detect and return the best available backend."""
     backends = [
         CaffeinateBackend,
+        DBusScreenSaverBackend,
         SystemdInhibitBackend,
     ]
 
