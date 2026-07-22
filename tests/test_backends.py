@@ -1,4 +1,5 @@
 import signal
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -75,6 +76,23 @@ class TestDBusScreenSaverAvailable:
         monkeypatch.setattr("keep_alive.backends.subprocess.run", lambda *a, **kw: result)
         assert DBusScreenSaverBackend.available() is True
 
+    def test_warns_when_helper_exits_immediately(self, tmp_pidfile):
+        mock_proc = MagicMock(pid=12345)
+        mock_proc.poll.return_value = 1
+        mock_proc.returncode = 1
+        mock_proc.stderr = MagicMock()
+        mock_proc.stderr.read.return_value = b"failed to acquire any D-Bus inhibitors"
+        with (
+            patch("keep_alive.backends.subprocess.Popen", return_value=mock_proc),
+            patch("keep_alive.backends.time.sleep"),
+            patch("builtins.print") as mock_print,
+        ):
+            DBusScreenSaverBackend.inhibit(300)
+        mock_print.assert_any_call(
+            "keep-alive: failed to acquire any D-Bus inhibitors",
+            file=sys.stderr,
+        )
+
 
 @pytest.fixture
 def tmp_pidfile(tmp_path, monkeypatch):
@@ -93,7 +111,11 @@ class TestPidfileTracking:
 
     def test_inhibit_writes_pidfile(self, tmp_pidfile, backend):
         mock_proc = MagicMock(pid=12345)
-        with patch("keep_alive.backends.subprocess.Popen", return_value=mock_proc):
+        mock_proc.poll.return_value = None
+        with (
+            patch("keep_alive.backends.subprocess.Popen", return_value=mock_proc),
+            patch("keep_alive.backends.time.sleep"),
+        ):
             backend.inhibit(300)
         assert tmp_pidfile.exists()
         assert tmp_pidfile.read_text() == "12345"

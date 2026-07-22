@@ -3,6 +3,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -189,9 +190,30 @@ class DBusScreenSaverBackend(InhibitorBackend):
         proc = subprocess.Popen(
             [cls._find_gi_python(), str(helper), str(duration_seconds)],
             start_new_session=True,
+            stderr=subprocess.PIPE,
         )
         _write_pidfile(proc.pid)
+        cls._warn_if_failed(proc)
         return proc
+
+    @staticmethod
+    def _warn_if_failed(proc: subprocess.Popen) -> None:
+        """Detect immediate helper exit and surface its error message.
+
+        The helper is fire-and-forget (new session, parent exits right
+        away), so a startup failure would otherwise go unnoticed. A brief
+        poll distinguishes a process that died from one still initializing.
+        """
+        time.sleep(0.5)
+        if proc.poll() is None:
+            return
+        error = ""
+        if proc.stderr:
+            error = proc.stderr.read().decode(errors="replace").strip()
+        if error:
+            print(f"keep-alive: {error}", file=sys.stderr)
+        else:
+            print("keep-alive: D-Bus inhibitor failed to start", file=sys.stderr)
 
     @staticmethod
     def _find_gi_python() -> str:

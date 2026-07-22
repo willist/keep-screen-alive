@@ -60,7 +60,7 @@ def _hold(duration: int) -> None:
             pass
 
     if not cookies:
-        print("keep-alive: failed to acquire any D-Bus inhibitors", file=sys.stderr)
+        print("failed to acquire any D-Bus inhibitors", file=sys.stderr)
         sys.exit(1)
 
     def _release(*_args):
@@ -101,7 +101,7 @@ def main():
     try:
         _hold(duration)
     except Exception as e:
-        print(f"keep-alive: {e}", file=sys.stderr)
+        print(str(e), file=sys.stderr)
         sys.exit(1)
 
 
