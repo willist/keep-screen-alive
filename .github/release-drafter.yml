@@ -1,21 +1,8 @@
 name-template: v$RESOLVED_VERSION
 tag-template: v$RESOLVED_VERSION
 
-# PRs with any of these labels are omitted from the changelog entirely.
-exclude-labels:
-  - internal
-
-categories:
-  - title: Breaking changes
-    label: breaking
-  - title: Features
-    label: feature
-  - title: Fixes
-    label: fix
-
-# Auto-label merged PRs by conventional-commit prefix in the title.
-# release-drafter runs this on push to main for any PRs that weren't
-# labeled during review, so we don't need a separate labeling action.
+# Auto-label PRs by conventional-commit prefix in the title.
+# Applied by the autolabeler workflow on pull_request events.
 autolabeler:
   - label: breaking
     title:
@@ -31,17 +18,30 @@ autolabeler:
       - '/^ci(\(.+\))?:(.+)?/'
       - '/^chore(\(.+\))?:(.+)?/'
 
-version-resolver:
-  major:
-    labels:
-      - breaking
-  minor:
-    labels:
-      - feature
-  patch:
-    labels:
-      - fix
-  default: patch
+# v7 schema: categories drive both changelog sections and version resolution.
+# pre-exclude drops PRs from the changelog and from version resolution.
+# The fallback version-resolver at the end provides the default patch bump.
+categories:
+  - type: pre-exclude
+    when:
+      label: internal
+  - title: Breaking changes
+    type: changelog
+    semver-increment: major
+    when:
+      label: breaking
+  - title: Features
+    type: changelog
+    semver-increment: minor
+    when:
+      label: feature
+  - title: Fixes
+    type: changelog
+    semver-increment: patch
+    when:
+      label: fix
+  - type: version-resolver
+    semver-increment: patch
 
 template: |
   ## What's Changed
