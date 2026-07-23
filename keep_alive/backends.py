@@ -3,6 +3,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -104,7 +105,12 @@ class CaffeinateBackend(InhibitorBackend):
 
 
 class SystemdInhibitBackend(InhibitorBackend):
-    """Linux systemd-inhibit backend."""
+    """Linux systemd-inhibit backend.
+
+    Does not prevent KDE screen lock (kscreenlocker ignores logind idle
+    inhibitors), but remains useful as a headless fallback where no
+    graphical session exists.
+    """
 
     @classmethod
     def available(cls) -> bool:
@@ -131,10 +137,92 @@ class SystemdInhibitBackend(InhibitorBackend):
         return proc
 
 
+class DBusScreenSaverBackend(InhibitorBackend):
+    """KDE Plasma D-Bus backend using org.freedesktop.ScreenSaver.Inhibit.
+
+    Spawns the dbus-inhibit binary (installed alongside keep-alive) which
+    holds ScreenSaver and PowerManagement inhibit cookies via D-Bus.
+    kscreenlocker respects these unlike systemd-logind idle inhibitors.
+    Only activates under KDE (XDG_CURRENT_DESKTOP=KDE) so it does not
+    silently engage on GNOME, which has its own inhibit mechanism.
+    """
+
+    @classmethod
+    def available(cls) -> bool:
+        if "KDE" not in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":"):
+            return False
+        binary = shutil.which("dbus-inhibit")
+        if binary is None:
+            return False
+        try:
+            result = subprocess.run(
+                [binary, "--check"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+            return result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    @classmethod
+    def cleanup(cls) -> None:
+        _kill_spawned()
+
+    @classmethod
+    def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
+        proc = subprocess.Popen(
+            ["dbus-inhibit", str(duration_seconds)],
+            start_new_session=True,
+            stderr=subprocess.PIPE,
+        )
+        _write_pidfile(proc.pid)
+        cls._warn_if_failed(proc)
+        return proc
+
+    @staticmethod
+    def _warn_if_failed(proc: subprocess.Popen) -> None:
+        """Detect immediate exit and surface the binary's error message.
+
+        The inhibit binary is fire-and-forget (new session, parent exits
+        right away), so a startup failure would otherwise go unnoticed.
+        """
+        time.sleep(0.5)
+        if proc.poll() is None:
+            return
+        error = ""
+        if proc.stderr:
+            error = proc.stderr.read().decode(errors="replace").strip()
+        if error:
+            print(f"keep-alive: {error}", file=sys.stderr)
+        else:
+            print("keep-alive: D-Bus inhibitor failed to start", file=sys.stderr)
+
+    @staticmethod
+    def _find_gi_python() -> str:
+        """Find a Python executable with PyGObject, preferring sys.executable."""
+        for candidate in (sys.executable, "/usr/bin/python3"):
+            if not candidate or not os.path.isfile(candidate):
+                continue
+            try:
+                proc = subprocess.Popen(
+                    [candidate, "-c", "import gi"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                proc.wait(timeout=3)
+                if proc.returncode == 0:
+                    return candidate
+            except (OSError, subprocess.SubprocessError):
+                continue
+        return sys.executable
+
+
 def get_backend() -> type[InhibitorBackend]:
     """Detect and return the best available backend."""
     backends = [
         CaffeinateBackend,
+        DBusScreenSaverBackend,
         SystemdInhibitBackend,
     ]
 
