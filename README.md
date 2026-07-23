@@ -6,13 +6,19 @@ On macOS, it uses [caffeinate](https://ss64.com/osx/caffeinate.html). On Linux K
 ## Install
 
 ```bash
-$ pip install keep-screen-alive
+# uv (recommended)
+uv tool install keep-screen-alive
+
+# pipx
+pipx install keep-screen-alive
 ```
 
 For KDE Plasma support (prevents screen lock via D-Bus instead of systemd-inhibit):
 
 ```bash
-$ pip install keep-screen-alive[dbus]
+uv tool install 'keep-screen-alive[dbus]'
+# or
+pipx install 'keep-screen-alive[dbus]'
 ```
 
 This installs [PyGObject](https://pygobject.readthedocs.io/), which requires `gobject-introspection` and `cairo` system libraries. On Fedora/Bazzite these are pre-installed; on Ubuntu install `libgirepository1.0-dev` and `libcairo2-dev` first.
