@@ -50,29 +50,28 @@ class TestDBusScreenSaverAvailable:
         monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
         assert DBusScreenSaverBackend.available() is False
 
-    def test_false_when_no_gdbus(self, monkeypatch):
+    def test_false_when_binary_missing(self, monkeypatch):
         monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
         monkeypatch.setattr("keep_alive.backends.shutil.which", lambda cmd: None)
         assert DBusScreenSaverBackend.available() is False
 
-    def test_false_when_screensaver_not_registered(self, monkeypatch):
+    def test_false_when_check_fails(self, monkeypatch):
         monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
         monkeypatch.setattr(
             "keep_alive.backends.shutil.which",
-            lambda cmd: "/usr/bin/gdbus" if cmd == "gdbus" else None,
+            lambda cmd: "/usr/bin/dbus-inhibit" if cmd == "dbus-inhibit" else None,
         )
-        result = MagicMock(stdout=b"([])", returncode=0)
+        result = MagicMock(returncode=1)
         monkeypatch.setattr("keep_alive.backends.subprocess.run", lambda *a, **kw: result)
         assert DBusScreenSaverBackend.available() is False
 
-    def test_true_when_screensaver_registered(self, monkeypatch):
+    def test_true_when_check_passes(self, monkeypatch):
         monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
         monkeypatch.setattr(
             "keep_alive.backends.shutil.which",
-            lambda cmd: "/usr/bin/gdbus" if cmd == "gdbus" else None,
+            lambda cmd: "/usr/bin/dbus-inhibit" if cmd == "dbus-inhibit" else None,
         )
-        fake_stdout = b"('org.freedesktop.ScreenSaver', 'org.kde.KWin')"
-        result = MagicMock(stdout=fake_stdout, returncode=0)
+        result = MagicMock(returncode=0)
         monkeypatch.setattr("keep_alive.backends.subprocess.run", lambda *a, **kw: result)
         assert DBusScreenSaverBackend.available() is True
 

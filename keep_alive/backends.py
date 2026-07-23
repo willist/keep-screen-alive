@@ -140,43 +140,28 @@ class SystemdInhibitBackend(InhibitorBackend):
 class DBusScreenSaverBackend(InhibitorBackend):
     """KDE Plasma D-Bus backend using org.freedesktop.ScreenSaver.Inhibit.
 
-    Talks directly to kscreenlocker via the freedesktop ScreenSaver D-Bus
-    interface, which KDE respects (unlike systemd-logind idle inhibitors).
-    Also holds a PowerManagement.Inhibit cookie when available to cover
-    suspend / DPMS. Only activates under KDE (XDG_CURRENT_DESKTOP=KDE) so
-    it does not silently engage on GNOME, which has its own inhibit
-    mechanism.
-
-    Availability is checked via the gdbus CLI tool so it works even when
-    the running Python lacks PyGObject (e.g. poetry venv, pipx). The
-    helper script runs under whatever Python has gi installed, found at
-    runtime by trying sys.executable then /usr/bin/python3.
+    Spawns the dbus-inhibit binary (installed alongside keep-alive) which
+    holds ScreenSaver and PowerManagement inhibit cookies via D-Bus.
+    kscreenlocker respects these unlike systemd-logind idle inhibitors.
+    Only activates under KDE (XDG_CURRENT_DESKTOP=KDE) so it does not
+    silently engage on GNOME, which has its own inhibit mechanism.
     """
 
     @classmethod
     def available(cls) -> bool:
         if "KDE" not in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":"):
             return False
-        gdbus = shutil.which("gdbus")
-        if gdbus is None:
+        binary = shutil.which("dbus-inhibit")
+        if binary is None:
             return False
         try:
             result = subprocess.run(
-                [
-                    gdbus,
-                    "call",
-                    "--session",
-                    "--dest",
-                    "org.freedesktop.DBus",
-                    "--object-path",
-                    "/org/freedesktop/DBus",
-                    "--method",
-                    "org.freedesktop.DBus.ListNames",
-                ],
-                capture_output=True,
+                [binary, "--check"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 timeout=5,
             )
-            return b"org.freedesktop.ScreenSaver" in result.stdout
+            return result.returncode == 0
         except (OSError, subprocess.SubprocessError):
             return False
 
@@ -186,9 +171,8 @@ class DBusScreenSaverBackend(InhibitorBackend):
 
     @classmethod
     def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
-        helper = Path(__file__).parent / "_dbus_inhibit.py"
         proc = subprocess.Popen(
-            [cls._find_gi_python(), str(helper), str(duration_seconds)],
+            ["dbus-inhibit", str(duration_seconds)],
             start_new_session=True,
             stderr=subprocess.PIPE,
         )
@@ -198,11 +182,10 @@ class DBusScreenSaverBackend(InhibitorBackend):
 
     @staticmethod
     def _warn_if_failed(proc: subprocess.Popen) -> None:
-        """Detect immediate helper exit and surface its error message.
+        """Detect immediate exit and surface the binary's error message.
 
-        The helper is fire-and-forget (new session, parent exits right
-        away), so a startup failure would otherwise go unnoticed. A brief
-        poll distinguishes a process that died from one still initializing.
+        The inhibit binary is fire-and-forget (new session, parent exits
+        right away), so a startup failure would otherwise go unnoticed.
         """
         time.sleep(0.5)
         if proc.poll() is None:

@@ -1,13 +1,13 @@
-"""Helper process that holds D-Bus inhibit cookies for a fixed duration.
+"""D-Bus screen-lock and power-management inhibitor.
 
-Spawned by DBusScreenSaverBackend as a background subprocess. Connects to
-the session bus, acquires inhibit cookies from org.freedesktop.ScreenSaver
-(kscreenlocker) and, when available, org.freedesktop.PowerManagement.Inhibit
-(PowerDevil). Then blocks for the requested duration and releases both.
+Holds org.freedesktop.ScreenSaver.Inhibit and (when available)
+org.freedesktop.PowerManagement.Inhibit cookies for a fixed duration.
+SIGTERM triggers clean UnInhibit on both. If killed forcefully, KDE
+releases the cookies when the bus connection drops.
 
-SIGTERM triggers a clean UnInhibit on both services. If the process is
-killed forcefully (SIGKILL), KDE releases the cookies automatically when
-the bus connection drops, so no leak occurs.
+Usage:
+    dbus-inhibit <duration_seconds>    Hold inhibitors for N seconds
+    dbus-inhibit --check               Exit 0 if inhibitors can be acquired
 """
 
 from __future__ import annotations
@@ -31,6 +31,32 @@ _TARGETS = [
         "org.freedesktop.PowerManagement.Inhibit",
     ),
 ]
+
+
+def _check() -> int:
+    """Verify that D-Bus inhibitors can be acquired. Returns exit code."""
+    try:
+        import gi
+
+        gi.require_version("Gio", "2.0")
+        from gi.repository import Gio, GLib
+
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        reply = bus.call_sync(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "ListNames",
+            None,
+            GLib.VariantType("(as)"),
+            Gio.DBusCallFlags.NONE,
+            -1,
+            None,
+        )
+        names = reply.unpack()[0]
+        return 0 if "org.freedesktop.ScreenSaver" in names else 1
+    except Exception:
+        return 1
 
 
 def _hold(duration: int) -> None:
@@ -89,8 +115,11 @@ def _hold(duration: int) -> None:
 
 
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "--check":
+        sys.exit(_check())
+
     if len(sys.argv) != 2:
-        print(f"usage: {sys.argv[0]} <duration_seconds>", file=sys.stderr)
+        print(f"usage: {sys.argv[0]} <duration_seconds> | --check", file=sys.stderr)
         sys.exit(2)
     try:
         duration = int(sys.argv[1])

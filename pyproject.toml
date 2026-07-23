@@ -24,6 +24,7 @@ classifiers = [
 python = "^3.11"
 dateparser = "^1.1.8"
 six = "^1.16.0"
+PyGObject = {version = ">=3.42", markers = "sys_platform == 'linux'"}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
@@ -31,6 +32,7 @@ ruff = "^0.15.22"
 
 [tool.poetry.scripts]
 keep-alive = "keep_alive.run:main"
+dbus-inhibit = "keep_alive.dbus_inhibit:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
