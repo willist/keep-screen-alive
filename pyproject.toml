@@ -24,7 +24,10 @@ classifiers = [
 python = "^3.11"
 dateparser = "^1.1.8"
 six = "^1.16.0"
-PyGObject = {version = ">=3.42", markers = "sys_platform == 'linux'"}
+PyGObject = {version = ">=3.42", markers = "sys_platform == 'linux'", optional = true}
+
+[tool.poetry.extras]
+dbus = ["PyGObject"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"

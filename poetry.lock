@@ -80,10 +80,10 @@ testing = ["coverage", "pytest", "pytest-benchmark"]
 name = "pycairo"
 version = "1.29.0"
 description = "Python interface for cairo"
-optional = false
+optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "sys_platform == \"linux\""
+markers = "sys_platform == \"linux\" and extra == \"dbus\""
 files = [
     {file = "pycairo-1.29.0-cp310-cp310-win32.whl", hash = "sha256:96c67e6caba72afd285c2372806a0175b1aa2f4537aa88fb4d9802d726effcd1"},
     {file = "pycairo-1.29.0-cp310-cp310-win_amd64.whl", hash = "sha256:65bddd944aee9f7d7d72821b1c87e97593856617c2820a78d589d66aa8afbd08"},
@@ -124,10 +124,10 @@ windows-terminal = ["colorama (>=0.4.6)"]
 name = "pygobject"
 version = "3.56.3"
 description = "Python bindings for GObject Introspection"
-optional = false
+optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "sys_platform == \"linux\""
+markers = "sys_platform == \"linux\" and extra == \"dbus\""
 files = [
     {file = "pygobject-3.56.3.tar.gz", hash = "sha256:12760e4a0e3d04b6eb95e06f7a27e362c826d567ea613373a92c003b6c70d2d6"},
 ]
@@ -379,7 +379,10 @@ tzdata = {version = "*", markers = "platform_system == \"Windows\""}
 [package.extras]
 devenv = ["black", "check-manifest", "flake8", "pyroma", "pytest (>=4.3)", "pytest-cov", "pytest-mock (>=3.3)", "zest.releaser"]
 
+[extras]
+dbus = ["PyGObject"]
+
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "5d9bd22714d9a75f1d836e3f86a356850736c96bfaedb9ae81afb4e16ad07afa"
+content-hash = "49cc68854b4b5186191e828a3d53c91df4a7bd44cb76c1f5fa338a2a1ef361c0"
