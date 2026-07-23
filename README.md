@@ -1,13 +1,21 @@
 ## Summary
 A cross-platform command line tool that keeps your screen awake using a forward looking relative datetime interface.
 
-On macOS, it uses [caffeinate](https://ss64.com/osx/caffeinate.html). On Linux, it uses systemd-inhibit.
+On macOS, it uses [caffeinate](https://ss64.com/osx/caffeinate.html). On Linux KDE, it uses D-Bus ScreenSaver inhibition (via the `dbus-inhibit` binary). On other Linux desktops and headless systems, it falls back to systemd-inhibit.
 
 ## Install
 
 ```bash
 $ pip install keep-screen-alive
 ```
+
+For KDE Plasma support (prevents screen lock via D-Bus instead of systemd-inhibit):
+
+```bash
+$ pip install keep-screen-alive[dbus]
+```
+
+This installs [PyGObject](https://pygobject.readthedocs.io/), which requires `gobject-introspection` and `cairo` system libraries. On Fedora/Bazzite these are pre-installed; on Ubuntu install `libgirepository1.0-dev` and `libcairo2-dev` first.
 
 ## Examples
 
