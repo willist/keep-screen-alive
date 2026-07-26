@@ -2,11 +2,12 @@ import argparse
 import re
 import sys
 import warnings
+from datetime import datetime
 from pathlib import Path
 
 import dateparser
 
-from keep_alive.backends import get_backend
+from keep_alive.backends import _read_state, get_backend
 from keep_alive.config import Config, ConfigError, load_config
 from keep_alive.rules import combine, evaluate
 
@@ -22,6 +23,9 @@ def main():
     if args.list:
         _list_config(config)
         return
+    if args.status:
+        _status()
+        return
     now = _current_now()
     input_value = " ".join(args.input)
     target = _resolve_target(input_value, config, now)
@@ -29,7 +33,7 @@ def main():
     if args.dry_run:
         _dry_run(target, now)
         return
-    _run_backend(target, now)
+    _run_backend(target, now, input_value)
 
 
 def _parse_args(argv):
@@ -51,6 +55,11 @@ def _parse_args(argv):
         "--dry-run",
         action="store_true",
         help="resolve and print target without engaging the backend",
+    )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="show the in-flight keep-alive target, timing, backend, and pid",
     )
     return parser.parse_args(argv)
 
@@ -234,12 +243,102 @@ def _dry_run(target, now):
     print(f"backend: {backend.__name__}")
 
 
-def _run_backend(target, now):
+def _run_backend(target, now, input_value):
     diff = (target - now).seconds
     backend = get_backend()
     backend.cleanup()
-    backend.inhibit(diff)
+    metadata = {
+        "input": input_value,
+        "start": now.isoformat(),
+        "end": target.isoformat(),
+    }
+    backend.inhibit(diff, metadata)
     print(f"Keeping alive until {target:%I:%M%p %Z, %b %d, %Y}")
+
+
+# Maps backend class name -> the command ps will report for its inhibit
+# process. Used by --status to verify a live PID is still our backend and
+# not a reused PID belonging to some other process.
+_BACKEND_COMMANDS = {
+    "CaffeinateBackend": "caffeinate",
+    "SystemdInhibitBackend": "systemd-inhibit",
+    "DBusScreenSaverBackend": "dbus-inhibit",
+}
+
+
+def _is_our_process(pid: int, backend_name: str) -> bool:
+    """Verify the PID is still our backend process. Returns False if the
+    process is dead, reused by another binary, or can't be checked.
+    """
+    import os
+
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    expected = _BACKEND_COMMANDS.get(backend_name)
+    if not expected:
+        return False
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "comm="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return False
+    actual = result.stdout.strip()
+    return actual.endswith(expected)
+
+
+def _status():
+    """Print the in-flight keep-alive state, if any. Read-only: does not
+    call cleanup(), inhibit(), or modify the state file.
+
+    A live keep-alive run prints six labeled lines covering the original
+    input, start time, end time, time remaining, backend class, and pid.
+    Anything else (no state file, dead process, PID reused by a non-keep-
+    alive binary, or a legacy plain-PID pidfile) prints a clear "no
+    keep-alive running" or surfaces what's available with missing fields
+    noted.
+    """
+    state = _read_state()
+    if state is None:
+        print("no keep-alive running")
+        return
+    pid = state.get("pid")
+    backend_name = state.get("backend", "")
+    if not isinstance(pid, int) or not _is_our_process(pid, backend_name):
+        print("no keep-alive running")
+        return
+    if state.get("_legacy"):
+        # Old plain-PID pidfile - we only know the PID.
+        print("target: (unknown - legacy pidfile)")
+        print("start: (unknown)")
+        print("end: (unknown)")
+        print("remaining: (unknown)")
+        print("backend: (unknown)")
+        print(f"pid: {pid}")
+        return
+    try:
+        start = datetime.fromisoformat(state["start"]).astimezone()
+        end = datetime.fromisoformat(state["end"]).astimezone()
+    except (KeyError, ValueError):
+        print("no keep-alive running")
+        return
+    now = _current_now()
+    remaining = end - now
+    input_value = state.get("input") or "(bare)"
+    print(f"target: {input_value}")
+    print(f"start: {start:%I:%M%p %Z, %b %d, %Y}")
+    print(f"end: {end:%I:%M%p %Z, %b %d, %Y}")
+    print(f"remaining: {_format_duration(remaining)}")
+    print(f"backend: {backend_name}")
+    print(f"pid: {pid}")
 
 
 if __name__ == "__main__":
