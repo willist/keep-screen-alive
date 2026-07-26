@@ -86,7 +86,7 @@ class TestDBusScreenSaverAvailable:
             patch("keep_alive.backends.time.sleep"),
             patch("builtins.print") as mock_print,
         ):
-            DBusScreenSaverBackend.inhibit(300)
+            DBusScreenSaverBackend.inhibit(300, {"input": "1h"})
         mock_print.assert_any_call(
             "keep-alive: failed to acquire any D-Bus inhibitors",
             file=sys.stderr,
@@ -115,9 +115,14 @@ class TestPidfileTracking:
             patch("keep_alive.backends.subprocess.Popen", return_value=mock_proc),
             patch("keep_alive.backends.time.sleep"),
         ):
-            backend.inhibit(300)
+            backend.inhibit(300, {"input": "1h"})
         assert tmp_pidfile.exists()
-        assert tmp_pidfile.read_text() == "12345"
+        import json
+
+        state = json.loads(tmp_pidfile.read_text())
+        assert state["pid"] == 12345
+        assert state["backend"] == backend.__name__
+        assert state["input"] == "1h"
 
     def test_cleanup_kills_stored_process_group(self, tmp_pidfile, backend):
         tmp_pidfile.write_text("12345")

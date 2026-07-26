@@ -1,6 +1,6 @@
 import sys
 from datetime import UTC, datetime, time, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -254,14 +254,14 @@ class TestMain:
         self._run_main(monkeypatch, ["work"])
 
         assert mock_backend.cleanup.called
-        mock_backend.inhibit.assert_called_once_with(7200)
+        mock_backend.inhibit.assert_called_once_with(7200, ANY)
         assert "Keeping alive until" in capsys.readouterr().out
 
     def test_dateparser_input_runs_backend(
         self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
     ):
         self._run_main(monkeypatch, ["1h"])
-        mock_backend.inhibit.assert_called_once_with(3600)
+        mock_backend.inhibit.assert_called_once_with(3600, ANY)
 
     def test_global_rule_used_when_alias_misses(
         self, monkeypatch, mock_now, mock_backend, mock_config_loader
@@ -279,7 +279,7 @@ class TestMain:
         )
         self._run_main(monkeypatch, ["work"])
         # 30 minutes = 1800 seconds
-        mock_backend.inhibit.assert_called_once_with(1800)
+        mock_backend.inhibit.assert_called_once_with(1800, ANY)
 
     def test_alias_no_match_exits_nonzero(
         self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
@@ -397,6 +397,165 @@ class TestDryRun:
         # --dry-run output suppressed
         assert "target:" not in out
         assert not mock_backend.inhibit.called
+
+
+# ---------------------------------------------------------------------
+# main: --status
+# ---------------------------------------------------------------------
+
+
+class TestStatus:
+    """--status reads the state file and prints what's known about a live
+    keep-alive run. Read-only: never writes, kills, or engages a backend.
+    """
+
+    def _run_main(self, monkeypatch, argv):
+        monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
+        run.main()
+
+    def _redirect_state_file(self, monkeypatch, tmp_path):
+        """Point backends._pidfile_path at tmp_path so tests can write fixtures."""
+        path = tmp_path / "state"
+        monkeypatch.setattr("keep_alive.backends._pidfile_path", lambda: path)
+        return path
+
+    def _write_state(self, path, state):
+        import json
+
+        path.write_text(json.dumps(state))
+
+    def test_no_state_file_prints_not_running(self, monkeypatch, capsys, tmp_path):
+        self._redirect_state_file(monkeypatch, tmp_path)
+        self._run_main(monkeypatch, ["--status"])
+        assert "no keep-alive running" in capsys.readouterr().out
+
+    def test_dead_pid_prints_not_running(self, monkeypatch, capsys, tmp_path):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        self._write_state(
+            path,
+            {
+                "input": "2h",
+                "start": "2024-01-15T12:00:00+00:00",
+                "end": "2024-01-15T14:00:00+00:00",
+                "pid": 99999,
+                "backend": "CaffeinateBackend",
+            },
+        )
+        # _is_our_process returns False (PID is dead or reused).
+        monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: False)
+        self._run_main(monkeypatch, ["--status"])
+        assert "no keep-alive running" in capsys.readouterr().out
+
+    def test_live_prints_six_lines(self, monkeypatch, capsys, tmp_path, mock_now):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        self._write_state(
+            path,
+            {
+                "input": "2h",
+                "start": "2024-01-15T12:00:00+00:00",
+                "end": "2024-01-15T14:00:00+00:00",
+                "pid": 12345,
+                "backend": "CaffeinateBackend",
+            },
+        )
+        monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: True)
+        self._run_main(monkeypatch, ["--status"])
+        out = capsys.readouterr().out
+        assert "target: 2h" in out
+        assert "start:" in out
+        assert "end:" in out
+        assert "remaining: 2h" in out
+        assert "backend: CaffeinateBackend" in out
+        assert "pid: 12345" in out
+
+    def test_legacy_pidfile_prints_unknowns(self, monkeypatch, capsys, tmp_path):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        # Old-format pidfile: just a PID string.
+        path.write_text("12345")
+        # Exercise the real _is_our_process logic: mock os.kill to report
+        # the process alive, and ps to report it as caffeinate. Legacy
+        # pidfiles have no backend name, so _is_our_process must accept
+        # any of the known backend commands.
+        monkeypatch.setattr("os.kill", lambda pid, sig: None)
+        import subprocess as _subprocess
+
+        fake_result = _subprocess.CompletedProcess(args=[], returncode=0, stdout="caffeinate")
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake_result)
+        self._run_main(monkeypatch, ["--status"])
+        out = capsys.readouterr().out
+        assert "pid: 12345" in out
+        assert "(unknown" in out  # missing metadata fields noted
+
+    def test_legacy_pidfile_with_dead_pid_prints_not_running(self, monkeypatch, capsys, tmp_path):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        path.write_text("12345")
+        # Process is dead — _is_our_process should report not-our-process.
+
+        def raise_lookup(pid, sig):
+            raise ProcessLookupError()
+
+        monkeypatch.setattr("os.kill", raise_lookup)
+        self._run_main(monkeypatch, ["--status"])
+        assert "no keep-alive running" in capsys.readouterr().out
+
+    def test_legacy_pidfile_with_reused_pid_prints_not_running(self, monkeypatch, capsys, tmp_path):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        path.write_text("12345")
+        # Process exists but isn't one of our backends.
+        monkeypatch.setattr("os.kill", lambda pid, sig: None)
+        import subprocess as _subprocess
+
+        fake_result = _subprocess.CompletedProcess(args=[], returncode=0, stdout="chrome")
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake_result)
+        self._run_main(monkeypatch, ["--status"])
+        assert "no keep-alive running" in capsys.readouterr().out
+
+    def test_bare_invocation_shows_bare_label(self, monkeypatch, capsys, tmp_path, mock_now):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        self._write_state(
+            path,
+            {
+                "input": "",
+                "start": "2024-01-15T12:00:00+00:00",
+                "end": "2024-01-15T14:00:00+00:00",
+                "pid": 12345,
+                "backend": "CaffeinateBackend",
+            },
+        )
+        monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: True)
+        self._run_main(monkeypatch, ["--status"])
+        assert "target: (bare)" in capsys.readouterr().out
+
+    def test_status_does_not_engage_backend(
+        self, monkeypatch, capsys, tmp_path, mock_backend, mock_config_loader
+    ):
+        self._redirect_state_file(monkeypatch, tmp_path)
+        self._run_main(monkeypatch, ["--status"])
+        assert not mock_backend.inhibit.called
+        assert not mock_backend.cleanup.called
+
+    def test_list_takes_precedence_over_status(
+        self, monkeypatch, capsys, tmp_path, mock_backend, mock_config_loader
+    ):
+        self._redirect_state_file(monkeypatch, tmp_path)
+        mock_config_loader["config"] = Config(
+            aliases={"work": [_target_rule("2h")]},
+        )
+        self._run_main(monkeypatch, ["--list", "--status"])
+        out = capsys.readouterr().out
+        assert "work" in out  # --list output
+        assert "for 2h" in out
+        assert "target:" not in out  # --status output suppressed
+        assert "no keep-alive running" not in out
+
+    def test_status_takes_precedence_over_dry_run(
+        self, monkeypatch, capsys, tmp_path, mock_now, mock_backend, mock_config_loader
+    ):
+        self._redirect_state_file(monkeypatch, tmp_path)
+        self._run_main(monkeypatch, ["--status", "--dry-run", "2h"])
+        out = capsys.readouterr().out
+        assert "no keep-alive running" in out  # --status output
+        assert "Keeping alive" not in out  # --dry-run output suppressed
 
 
 # ---------------------------------------------------------------------

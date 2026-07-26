@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import signal
@@ -9,11 +10,14 @@ from pathlib import Path
 
 
 def _pidfile_path() -> Path:
-    """Resolve the pidfile path for the current OS.
+    """Resolve the state file path for the current OS.
 
     Linux: $XDG_RUNTIME_DIR/keep-alive.pid (fallback /tmp). macOS:
     ~/Library/Caches/keep-alive/pid. Both are per-user and avoid colliding
     with inhibit processes spawned by other invocations or other tools.
+
+    The file's contents are JSON (pid + target metadata for --status);
+    the historical name ``pidfile`` is kept because the path is unchanged.
     """
     if sys.platform == "darwin":
         return Path.home() / "Library/Caches/keep-alive/pid"
@@ -22,11 +26,37 @@ def _pidfile_path() -> Path:
     return base / "keep-alive.pid"
 
 
-def _write_pidfile(pid: int) -> None:
-    """Record the spawned PID so the next cleanup() can find it."""
-    pidfile = _pidfile_path()
-    pidfile.parent.mkdir(parents=True, exist_ok=True)
-    pidfile.write_text(str(pid))
+def _write_state(state: dict) -> None:
+    """Write the JSON state file with pid, input, timing, and backend."""
+    path = _pidfile_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2))
+
+
+def _read_state() -> dict | None:
+    """Read the state file. Returns None if missing or unreadable.
+
+    Handles the current JSON format and the legacy plain-PID format used
+    before --status was introduced (returned with `_legacy: True` so callers
+    can note the missing metadata).
+    """
+    path = _pidfile_path()
+    if not path.exists():
+        return None
+    try:
+        content = path.read_text().strip()
+    except OSError:
+        return None
+    try:
+        state = json.loads(content)
+        if isinstance(state, dict):
+            return state
+    except json.JSONDecodeError:
+        pass
+    try:
+        return {"pid": int(content), "_legacy": True}
+    except ValueError:
+        return None
 
 
 def _kill_spawned() -> None:
@@ -35,16 +65,17 @@ def _kill_spawned() -> None:
     Both backends use ``start_new_session=True``, so the spawned PID is
     also the process-group leader and ``os.killpg(pid, ...)`` reaches the
     whole tree (matters for systemd-inhibit, which spawns ``sleep`` as a
-    child). Missing, corrupt, or stale pidfiles are handled quietly so a
+    child). Missing, corrupt, or stale state files are handled quietly so a
     broken prior run does not block a new one.
     """
-    pidfile = _pidfile_path()
-    if not pidfile.exists():
+    state = _read_state()
+    path = _pidfile_path()
+    if state is None:
+        path.unlink(missing_ok=True)
         return
-    try:
-        pid = int(pidfile.read_text().strip())
-    except (ValueError, OSError):
-        pidfile.unlink(missing_ok=True)
+    pid = state.get("pid")
+    if not isinstance(pid, int):
+        path.unlink(missing_ok=True)
         return
     try:
         os.killpg(pid, signal.SIGTERM)
@@ -52,7 +83,7 @@ def _kill_spawned() -> None:
         # Already dead - nothing to kill.
         pass
     finally:
-        pidfile.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
 
 
 class InhibitorBackend(ABC):
@@ -70,7 +101,7 @@ class InhibitorBackend(ABC):
 
     @classmethod
     @abstractmethod
-    def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
+    def inhibit(cls, duration_seconds: int, metadata: dict) -> subprocess.Popen:
         """Start inhibiting screen sleep for the given duration."""
 
 
@@ -86,7 +117,7 @@ class CaffeinateBackend(InhibitorBackend):
         _kill_spawned()
 
     @classmethod
-    def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
+    def inhibit(cls, duration_seconds: int, metadata: dict) -> subprocess.Popen:
         proc = subprocess.Popen(
             [
                 "caffeinate",
@@ -97,7 +128,7 @@ class CaffeinateBackend(InhibitorBackend):
             ],
             start_new_session=True,
         )
-        _write_pidfile(proc.pid)
+        _write_state({**metadata, "pid": proc.pid, "backend": cls.__name__})
         return proc
 
 
@@ -118,7 +149,7 @@ class SystemdInhibitBackend(InhibitorBackend):
         _kill_spawned()
 
     @classmethod
-    def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
+    def inhibit(cls, duration_seconds: int, metadata: dict) -> subprocess.Popen:
         proc = subprocess.Popen(
             [
                 "systemd-inhibit",
@@ -130,7 +161,7 @@ class SystemdInhibitBackend(InhibitorBackend):
             ],
             start_new_session=True,
         )
-        _write_pidfile(proc.pid)
+        _write_state({**metadata, "pid": proc.pid, "backend": cls.__name__})
         return proc
 
 
@@ -167,13 +198,13 @@ class DBusScreenSaverBackend(InhibitorBackend):
         _kill_spawned()
 
     @classmethod
-    def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
+    def inhibit(cls, duration_seconds: int, metadata: dict) -> subprocess.Popen:
         proc = subprocess.Popen(
             ["dbus-inhibit", str(duration_seconds)],
             start_new_session=True,
             stderr=subprocess.PIPE,
         )
-        _write_pidfile(proc.pid)
+        _write_state({**metadata, "pid": proc.pid, "backend": cls.__name__})
         cls._warn_if_failed(proc)
         return proc
 
