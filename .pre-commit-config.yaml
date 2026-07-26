@@ -7,6 +7,7 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
+      - id: check-merge-conflict
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
     hooks:
@@ -32,6 +33,18 @@ repos:
       - id: ruff-format
   - repo: local
     hooks:
+      - id: pip-audit
+        name: pip-audit
+        entry: poetry run pip-audit
+        language: system
+        pass_filenames: false
+      - id: mypy
+        name: mypy
+        entry: poetry run mypy keep_alive
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
       - id: pytest
         name: pytest
         entry: poetry run pytest

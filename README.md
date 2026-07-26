@@ -131,9 +131,10 @@ Install [Poetry](https://python-poetry.org/) and [pre-commit](https://pre-commit
 poetry install
 pre-commit install
 pre-commit install --hook-type commit-msg
+pre-commit install --hook-type pre-push
 ```
 
-Run tests with `poetry run pytest`. Pre-commit hooks run ruff (lint and format) on commit; the commit-msg hook verifies conventional commit format; pytest runs as a pre-push hook. CI runs the same checks on pull requests and on push to `main`.
+Run tests with `poetry run pytest`. Pre-commit hooks run ruff (lint and format), pip-audit, and hygiene checks on commit; the commit-msg hook verifies conventional commit format; mypy and pytest run as pre-push hooks. CI runs the same checks on pull requests and on push to `main`.
 
 ### Commit format
 

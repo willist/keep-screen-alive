@@ -18,7 +18,7 @@ def _pidfile_path() -> Path:
     if sys.platform == "darwin":
         return Path.home() / "Library/Caches/keep-alive/pid"
     xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
-    base = Path(xdg_runtime) if xdg_runtime else Path("/tmp")
+    base = Path(xdg_runtime) if xdg_runtime else Path("/tmp")  # noqa: S108 - intentional fallback
     return base / "keep-alive.pid"
 
 
@@ -62,19 +62,16 @@ class InhibitorBackend(ABC):
     @abstractmethod
     def available(cls) -> bool:
         """Check if this backend is available on the current system."""
-        pass
 
     @classmethod
     @abstractmethod
     def cleanup(cls) -> None:
         """Clean up any existing inhibit processes."""
-        pass
 
     @classmethod
     @abstractmethod
     def inhibit(cls, duration_seconds: int) -> subprocess.Popen:
         """Start inhibiting screen sleep for the given duration."""
-        pass
 
 
 class CaffeinateBackend(InhibitorBackend):
@@ -202,7 +199,7 @@ class DBusScreenSaverBackend(InhibitorBackend):
     def _find_gi_python() -> str:
         """Find a Python executable with PyGObject, preferring sys.executable."""
         for candidate in (sys.executable, "/usr/bin/python3"):
-            if not candidate or not os.path.isfile(candidate):
+            if not candidate or not Path(candidate).is_file():
                 continue
             try:
                 proc = subprocess.Popen(

@@ -240,7 +240,7 @@ class TestParseArgs:
 
 class TestMain:
     def _run_main(self, monkeypatch, argv):
-        monkeypatch.setattr("sys.argv", ["keep-alive"] + argv)
+        monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
         run.main()
 
     def test_alias_runs_backend(
@@ -362,7 +362,7 @@ class TestConfigFlag:
 
 class TestList:
     def _run_main(self, monkeypatch, argv):
-        monkeypatch.setattr("sys.argv", ["keep-alive"] + argv)
+        monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
         run.main()
 
     def test_list_with_empty_config(self, monkeypatch, capsys, mock_backend, mock_config_loader):

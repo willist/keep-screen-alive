@@ -32,6 +32,10 @@ dbus = ["PyGObject"]
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
 ruff = "^0.15.22"
+mypy = "^1.18"
+pip-audit = "^2.9"
+pre-commit = "^4.3"
+types-dateparser = "^1.2"
 
 [tool.poetry.scripts]
 keep-alive = "keep_alive.run:main"
@@ -45,7 +49,24 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W", "UP"]
+select = [
+    "E", "F", "I", "W", "UP",
+    "B", "SIM", "C901", "PLR09", "S",
+    "RUF", "PIE", "PTH", "C4", "RET", "ISC", "N",
+    "FURB", "LOG", "G", "ASYNC", "PGH", "TID", "FA",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S603", "S108", "RUF043"]
+"keep_alive/backends.py" = ["S603", "S607"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["gi", "gi.repository.*"]
+ignore_missing_imports = true
 
 [build-system]
 requires = ["poetry-core"]
