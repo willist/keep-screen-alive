@@ -109,6 +109,22 @@ class TestResolveTarget:
         target = run._resolve_target("2h", config, PINNED_NOW)
         assert target == PINNED_NOW + timedelta(hours=2)
 
+    def test_bare_future_time_of_day_stays_on_today(self):
+        # Regression for #31: at noon, 4pm resolves to today's 4pm,
+        # not tomorrow's. dateparser 1.4.x with PREFER_DATES_FROM="future"
+        # pushed bare time-of-day inputs one day forward.
+        config = Config()
+        target = run._resolve_target("4pm", config, PINNED_NOW)
+        assert target.date() == PINNED_NOW.date()
+        assert target > PINNED_NOW
+
+    def test_bare_future_time_of_day_with_minutes_stays_on_today(self):
+        # Same regression, exercising the 4:30pm input shape.
+        config = Config()
+        target = run._resolve_target("4:30pm", config, PINNED_NOW)
+        assert target.date() == PINNED_NOW.date()
+        assert target > PINNED_NOW
+
     def test_non_alias_unparseable_input_exits(self, capsys):
         config = Config()
         with pytest.raises(SystemExit):
@@ -127,6 +143,64 @@ class TestResolveTarget:
         )
         target = run._resolve_target("", config, PINNED_NOW)
         assert target == PINNED_NOW + timedelta(minutes=30)
+
+
+# ---------------------------------------------------------------------
+# _correct_future_preference_regression: unit tests that directly
+# simulate the dateparser 1.4.x bug. The integration tests above pin
+# end-to-end behavior, but on dateparser 1.1.8 (locked in poetry.lock)
+# the bug does not manifest, so the helper's branching logic would go
+# unexercised without these.
+# ---------------------------------------------------------------------
+
+
+class TestCorrectFuturePreferenceRegression:
+    def test_pulls_buggy_future_parse_back_to_today(self, monkeypatch):
+        # later simulates dateparser 1.4.x's buggy output for "4pm" at
+        # noon: tomorrow 4pm. The patched second parse returns today
+        # 4pm (still upcoming). Helper must pick today's.
+        now = PINNED_NOW  # 2024-01-15 12:00 UTC
+        later = datetime(2024, 1, 16, 16, 0, tzinfo=UTC)  # tomorrow 4pm
+        today = datetime(2024, 1, 15, 16, 0, tzinfo=UTC)  # today 4pm
+        monkeypatch.setattr("keep_alive.run.dateparser.parse", lambda *a, **kw: today)
+        result = run._correct_future_preference_regression(later, "4pm", now)
+        assert result == today
+
+    def test_keeps_tomorrow_when_today_slot_is_past(self, monkeypatch):
+        # 11am at noon: today's slot already past, so the helper must
+        # keep tomorrow's result rather than pulling back to a past time.
+        now = PINNED_NOW  # noon
+        later = datetime(2024, 1, 16, 11, 0, tzinfo=UTC)  # tomorrow 11am
+        past_today = datetime(2024, 1, 15, 11, 0, tzinfo=UTC)  # today 11am
+        monkeypatch.setattr("keep_alive.run.dateparser.parse", lambda *a, **kw: past_today)
+        result = run._correct_future_preference_regression(later, "11am", now)
+        assert result == later
+
+    def test_no_op_when_later_already_on_today(self, monkeypatch):
+        # Short-circuit: if later is already on today's date, the helper
+        # must not call dateparser a second time.
+        now = PINNED_NOW
+        later = datetime(2024, 1, 15, 16, 0, tzinfo=UTC)  # today 4pm
+
+        def fail_if_called(*a, **kw):
+            raise AssertionError("dateparser.parse should not be called")
+
+        monkeypatch.setattr("keep_alive.run.dateparser.parse", fail_if_called)
+        result = run._correct_future_preference_regression(later, "4pm", now)
+        assert result == later
+
+    def test_no_op_when_later_before_today(self, monkeypatch):
+        # Defensive: an explicitly past input (e.g. "yesterday 4pm")
+        # should pass through untouched for _validate_target to reject.
+        now = PINNED_NOW
+        later = datetime(2024, 1, 14, 16, 0, tzinfo=UTC)  # yesterday 4pm
+
+        def fail_if_called(*a, **kw):
+            raise AssertionError("dateparser.parse should not be called")
+
+        monkeypatch.setattr("keep_alive.run.dateparser.parse", fail_if_called)
+        result = run._correct_future_preference_regression(later, "yesterday 4pm", now)
+        assert result == later
 
 
 # ---------------------------------------------------------------------
