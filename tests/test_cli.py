@@ -1,3 +1,4 @@
+import sys
 from datetime import UTC, datetime, time, timedelta
 from unittest.mock import MagicMock
 
@@ -26,6 +27,7 @@ def mock_now(monkeypatch):
 @pytest.fixture
 def mock_backend(monkeypatch):
     backend = MagicMock()
+    backend.__name__ = "MockBackend"
     monkeypatch.setattr("keep_alive.run.get_backend", lambda: backend)
     return backend
 
@@ -317,6 +319,84 @@ class TestMain:
             self._run_main(monkeypatch, ["work"])
         assert exc.value.code != 0
         assert "config error: bad config" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------
+# main: --dry-run
+# ---------------------------------------------------------------------
+
+
+class TestDryRun:
+    def _run_main(self, monkeypatch, argv):
+        monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
+        run.main()
+
+    def test_dry_run_prints_target_duration_and_backend(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        mock_backend.__name__ = "FakeBackend"
+        self._run_main(monkeypatch, ["2h", "--dry-run"])
+        out = capsys.readouterr().out
+        assert "target:" in out
+        assert "duration: 2h" in out
+        assert "backend: FakeBackend" in out
+
+    def test_dry_run_does_not_engage_backend(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        self._run_main(monkeypatch, ["1h", "--dry-run"])
+        assert not mock_backend.inhibit.called
+        assert not mock_backend.cleanup.called
+
+    def test_dry_run_with_alias(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config(
+            aliases={"work": [_duration_rule(timedelta(hours=2))]},
+        )
+        mock_backend.__name__ = "FakeBackend"
+        self._run_main(monkeypatch, ["--dry-run", "work"])
+        out = capsys.readouterr().out
+        assert "duration: 2h" in out
+        assert "backend: FakeBackend" in out
+
+    def test_dry_run_with_past_target_still_validates(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        with pytest.raises(SystemExit):
+            self._run_main(monkeypatch, ["--dry-run", "yesterday 4pm"])
+        assert "in the past" in capsys.readouterr().out
+        assert not mock_backend.inhibit.called
+
+    def test_dry_run_surfaces_no_backend_found(
+        self, monkeypatch, capsys, mock_now, mock_config_loader
+    ):
+        def fake_get_backend():
+            print(
+                "No suitable backend found. "
+                "Please install caffeinate (macOS) or systemd-inhibit (Linux)."
+            )
+            sys.exit(1)
+
+        monkeypatch.setattr("keep_alive.run.get_backend", fake_get_backend)
+        with pytest.raises(SystemExit):
+            self._run_main(monkeypatch, ["--dry-run", "1h"])
+        assert "No suitable backend found" in capsys.readouterr().out
+
+    def test_list_takes_precedence_over_dry_run(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config(
+            aliases={"work": [_duration_rule(timedelta(hours=2))]},
+        )
+        self._run_main(monkeypatch, ["--list", "--dry-run"])
+        out = capsys.readouterr().out
+        # --list output present
+        assert "work" in out
+        assert "for 2h" in out
+        # --dry-run output suppressed
+        assert "target:" not in out
+        assert not mock_backend.inhibit.called
 
 
 # ---------------------------------------------------------------------
