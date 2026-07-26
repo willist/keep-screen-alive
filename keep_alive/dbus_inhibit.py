@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import signal
 import sys
 import time
@@ -91,7 +92,7 @@ def _hold(duration: int) -> None:
 
     def _release(*_args):
         for bus_name, path, iface, cookie in cookies:
-            try:
+            with contextlib.suppress(GLib.Error):
                 bus.call_sync(
                     bus_name,
                     path,
@@ -103,8 +104,6 @@ def _hold(duration: int) -> None:
                     -1,
                     None,
                 )
-            except GLib.Error:
-                pass
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _release)

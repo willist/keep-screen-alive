@@ -174,7 +174,7 @@ def _parse_time(s: str, context: str) -> time:
     try:
         return datetime.strptime(s, "%H:%M").time()
     except ValueError:
-        raise ConfigError(f"{context}: invalid time '{s}', must be HH:MM")
+        raise ConfigError(f"{context}: invalid time '{s}', must be HH:MM") from None
 
 
 def _parse_duration(s: str, context: str) -> timedelta:
