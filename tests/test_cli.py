@@ -472,11 +472,43 @@ class TestStatus:
         path = self._redirect_state_file(monkeypatch, tmp_path)
         # Old-format pidfile: just a PID string.
         path.write_text("12345")
-        monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: True)
+        # Exercise the real _is_our_process logic: mock os.kill to report
+        # the process alive, and ps to report it as caffeinate. Legacy
+        # pidfiles have no backend name, so _is_our_process must accept
+        # any of the known backend commands.
+        monkeypatch.setattr("os.kill", lambda pid, sig: None)
+        import subprocess as _subprocess
+
+        fake_result = _subprocess.CompletedProcess(args=[], returncode=0, stdout="caffeinate")
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake_result)
         self._run_main(monkeypatch, ["--status"])
         out = capsys.readouterr().out
         assert "pid: 12345" in out
         assert "(unknown" in out  # missing metadata fields noted
+
+    def test_legacy_pidfile_with_dead_pid_prints_not_running(self, monkeypatch, capsys, tmp_path):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        path.write_text("12345")
+        # Process is dead — _is_our_process should report not-our-process.
+
+        def raise_lookup(pid, sig):
+            raise ProcessLookupError()
+
+        monkeypatch.setattr("os.kill", raise_lookup)
+        self._run_main(monkeypatch, ["--status"])
+        assert "no keep-alive running" in capsys.readouterr().out
+
+    def test_legacy_pidfile_with_reused_pid_prints_not_running(self, monkeypatch, capsys, tmp_path):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        path.write_text("12345")
+        # Process exists but isn't one of our backends.
+        monkeypatch.setattr("os.kill", lambda pid, sig: None)
+        import subprocess as _subprocess
+
+        fake_result = _subprocess.CompletedProcess(args=[], returncode=0, stdout="chrome")
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake_result)
+        self._run_main(monkeypatch, ["--status"])
+        assert "no keep-alive running" in capsys.readouterr().out
 
     def test_bare_invocation_shows_bare_label(self, monkeypatch, capsys, tmp_path, mock_now):
         path = self._redirect_state_file(monkeypatch, tmp_path)

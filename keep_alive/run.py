@@ -269,6 +269,9 @@ _BACKEND_COMMANDS = {
 def _is_our_process(pid: int, backend_name: str) -> bool:
     """Verify the PID is still our backend process. Returns False if the
     process is dead, reused by another binary, or can't be checked.
+
+    Legacy pidfiles don't carry a backend name, so we accept a match
+    against any of the known backend commands in that case.
     """
     import os
 
@@ -276,8 +279,9 @@ def _is_our_process(pid: int, backend_name: str) -> bool:
         os.kill(pid, 0)
     except (ProcessLookupError, PermissionError):
         return False
-    expected = _BACKEND_COMMANDS.get(backend_name)
-    if not expected:
+    candidate_backends = [backend_name] if backend_name else list(_BACKEND_COMMANDS)
+    expected_commands = [_BACKEND_COMMANDS[n] for n in candidate_backends if n in _BACKEND_COMMANDS]
+    if not expected_commands:
         return False
     import subprocess
 
@@ -292,7 +296,7 @@ def _is_our_process(pid: int, backend_name: str) -> bool:
     except (subprocess.SubprocessError, OSError):
         return False
     actual = result.stdout.strip()
-    return actual.endswith(expected)
+    return any(actual.endswith(cmd) for cmd in expected_commands)
 
 
 def _status():
