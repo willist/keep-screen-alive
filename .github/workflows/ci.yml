@@ -28,6 +28,41 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-poetry-env
+      - name: ruff check
+        run: poetry run ruff check .
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-poetry-env
+      - name: ruff format --check
+        run: poetry run ruff format --check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-poetry-env
+      - name: mypy
+        run: poetry run mypy keep_alive
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-poetry-env
+      - name: pip-audit
+        # Audits the venv populated by `poetry install`. Simpler than
+        # `poetry export --without-hashes | pip-audit -r -` and fine for
+        # catching known-vulnerable dependencies at PR time.
+        run: poetry run pip-audit
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -36,16 +71,8 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/setup-poetry-env
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install Poetry
-        run: pip install poetry
-      - name: Install dependencies
-        run: poetry install --no-interaction
-      - name: Lint
-        run: poetry run ruff check .
-      - name: Format check
-        run: poetry run ruff format --check .
-      - name: Test
+      - name: pytest
         run: poetry run pytest
