@@ -1,4 +1,5 @@
 import argparse
+import re
 import sys
 import warnings
 from pathlib import Path
@@ -7,7 +8,7 @@ import dateparser
 
 from keep_alive.backends import get_backend
 from keep_alive.config import Config, ConfigError, load_config
-from keep_alive.rules import evaluate
+from keep_alive.rules import combine, evaluate
 
 _PARSER_SETTINGS = {
     "PREFER_DATES_FROM": "future",
@@ -67,7 +68,7 @@ def _list_config(config: Config) -> None:
 
 def _format_rule(rule) -> str:
     when = _format_condition(rule.condition)
-    do = _format_action(rule.action, rule.condition)
+    do = _format_target(rule)
     return f"{when} → {do}"
 
 
@@ -86,17 +87,24 @@ def _format_condition(condition) -> str:
     return " ".join(parts) if parts else "always"
 
 
-def _format_action(action, condition) -> str:
-    if action.kind == "relative_duration":
-        return f"for {_format_duration(action.duration)}"
-    if action.kind == "absolute_time":
-        return f"at {action.time:%H:%M}"
-    end_str = f"{condition.end:%H:%M}" if condition and condition.end else "?"
-    if action.kind == "until_window_end":
-        return f"until {end_str}"
-    if action.kind == "extend_window":
-        return f"until {end_str} + {_format_duration(action.duration)}"
-    return action.kind
+# Heuristic: anything that looks like a duration (digits followed by time
+# units, possibly compound) formats as "for X"; absolute times format as
+# "at X"; "end" formats as "until HH:MM" using the condition's end.
+_DURATION_LIKE = re.compile(
+    r"^(\d+(\.\d+)?\s*(h|m|s|d|hr|min|sec|hours?|minutes?|seconds?|days?|weeks?|years?)\s*)+$",
+    re.IGNORECASE,
+)
+
+
+def _format_target(rule) -> str:
+    target = rule.target
+    if target == "end":
+        if rule.condition and rule.condition.end:
+            return f"until {rule.condition.end:%H:%M}"
+        return "end"
+    if _DURATION_LIKE.match(target):
+        return f"for {target}"
+    return f"at {target}"
 
 
 def _format_days(days) -> str:
@@ -145,18 +153,31 @@ def _resolve_target(input_value: str, config: Config, now) -> object:
     """
     if not input_value or input_value in config.aliases:
         alias_rules = config.aliases.get(input_value, [])
-        target = evaluate(alias_rules, now)
-        if target is None:
-            target = evaluate(config.global_rules, now)
-        if target is None:
+        rule = evaluate(alias_rules, now)
+        if rule is None:
+            rule = evaluate(config.global_rules, now)
+        if rule is None:
             if input_value:
                 print(f"no rule matched alias '{input_value}'")
             else:
                 print("Missing a target")
             sys.exit(1)
-        return target
+        return _resolve_rule_target(rule, now)
 
     return _parse_target_with_dateparser(input_value, now)
+
+
+def _resolve_rule_target(rule, now):
+    """Resolve a matched rule's target expression to a datetime.
+
+    `target = "end"` binds to `condition.end` on today's date. Anything else
+    flows through the same dateparser path as bare CLI input, including the
+    bare-time-of-day regression correction from #31.
+    """
+    if rule.target == "end":
+        # Config validation guarantees condition.start + condition.end exist.
+        return combine(now, now.date(), rule.condition.end)
+    return _parse_target_with_dateparser(rule.target, now)
 
 
 def _parse_target_with_dateparser(input_value: str, now):

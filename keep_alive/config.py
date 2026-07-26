@@ -7,8 +7,7 @@ and returns a Config with parsed Rule objects from keep_alive.rules.
 TOML shape:
 
     [[rule]]                       # global rules
-    action = "relative_duration"
-    duration = "30m"
+    target = "30m"
 
     [[alias]]
     name = "work"
@@ -17,11 +16,10 @@ TOML shape:
         start = "05:00"
         end   = "16:00"
         days  = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-        action = "until_window_end"
+        target = "end"
 
         [[alias.rule]]
-        action = "relative_duration"
-        duration = "2h"
+        target = "2h"
 
 Missing config file returns an empty Config. Invalid config raises
 ConfigError with a message naming the offending field.
@@ -33,17 +31,13 @@ import os
 import tomllib
 import warnings
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import dateparser
 
-from keep_alive.rules import WEEKDAY_SET, Action, Condition, Rule
-
-VALID_ACTION_KINDS = frozenset(
-    {"until_window_end", "extend_window", "relative_duration", "absolute_time"}
-)
+from keep_alive.rules import WEEKDAY_SET, Condition, Rule
 
 
 @dataclass
@@ -76,7 +70,7 @@ def load_config(path: Path | str | None = None) -> Config:
         with config_path.open("rb") as f:
             data = tomllib.load(f)
     except tomllib.TOMLDecodeError as e:
-        raise ConfigError(f"invalid TOML in {config_path}: {e}") from e
+        raise ConfigError(f"invalid TOML in {config_path}: {e}") from None
     return _parse_config(data)
 
 
@@ -116,11 +110,27 @@ def _parse_config(data: dict[str, Any]) -> Config:
 def _parse_rule(d: dict[str, Any], context: str) -> Rule:
     if not isinstance(d, dict):
         raise ConfigError(f"{context}: must be a table")
-    if "action" not in d:
-        raise ConfigError(f"{context}: missing 'action'")
+    if "action" in d:
+        raise ConfigError(
+            f"{context}: 'action' field removed in favor of 'target' (see README migration table)"
+        )
+    if "target" not in d:
+        raise ConfigError(f"{context}: missing 'target'")
+    target = d["target"]
+    if not isinstance(target, str) or not target.strip():
+        raise ConfigError(f"{context}: 'target' must be a non-empty string")
+
     condition = _parse_condition(d, context)
-    action = _parse_action(d, context)
-    return Rule(condition=condition, action=action)
+
+    if target == "end":
+        if condition is None or condition.start is None or condition.end is None:
+            raise ConfigError(
+                f"{context}: target='end' requires condition with both 'start' and 'end'"
+            )
+    else:
+        _validate_target_expression(target, context)
+
+    return Rule(condition=condition, target=target)
 
 
 def _parse_condition(d: dict[str, Any], context: str) -> Condition | None:
@@ -146,29 +156,7 @@ def _parse_condition(d: dict[str, Any], context: str) -> Condition | None:
     return Condition(start=start, end=end, days=days)
 
 
-def _parse_action(d: dict[str, Any], context: str) -> Action:
-    kind = d["action"]
-    if kind not in VALID_ACTION_KINDS:
-        raise ConfigError(
-            f"{context}: invalid action '{kind}'; must be one of {sorted(VALID_ACTION_KINDS)}"
-        )
-
-    duration = _parse_duration(d["duration"], f"{context}: 'duration'") if "duration" in d else None
-    abs_time = _parse_time(d["time"], f"{context}: 'time'") if "time" in d else None
-
-    if kind in ("until_window_end", "extend_window") and "end" not in d:
-        raise ConfigError(f"{context}: action '{kind}' requires 'end'")
-    if kind == "extend_window" and duration is None:
-        raise ConfigError(f"{context}: action 'extend_window' requires 'duration'")
-    if kind == "relative_duration" and duration is None:
-        raise ConfigError(f"{context}: action 'relative_duration' requires 'duration'")
-    if kind == "absolute_time" and abs_time is None:
-        raise ConfigError(f"{context}: action 'absolute_time' requires 'time'")
-
-    return Action(kind=kind, duration=duration, time=abs_time)
-
-
-def _parse_time(s: str, context: str) -> time:
+def _parse_time(s: str, context: str):
     if not isinstance(s, str):
         raise ConfigError(f"{context}: must be a string, got {type(s).__name__}")
     try:
@@ -177,18 +165,18 @@ def _parse_time(s: str, context: str) -> time:
         raise ConfigError(f"{context}: invalid time '{s}', must be HH:MM") from None
 
 
-def _parse_duration(s: str, context: str) -> timedelta:
-    if not isinstance(s, str):
-        raise ConfigError(f"{context}: must be a string, got {type(s).__name__}")
-    base = datetime(2000, 1, 1)
+def _validate_target_expression(s: str, context: str) -> None:
+    """Smoke-test the target expression with dateparser so config load fails
+    on obviously broken inputs like `target = "banana"`.
+
+    Syntax check only — actual resolution happens at runtime against a real
+    `now`. Inputs dateparser can't make sense of are rejected here.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        future = dateparser.parse(
-            s, settings={"RELATIVE_BASE": base, "PREFER_DATES_FROM": "future"}
+        probe = dateparser.parse(
+            s,
+            settings={"PREFER_DATES_FROM": "future", "RETURN_AS_TIMEZONE_AWARE": True},
         )
-    if future is None:
-        raise ConfigError(f"{context}: invalid duration '{s}'")
-    delta = future - base
-    if delta.total_seconds() <= 0:
-        raise ConfigError(f"{context}: duration '{s}' must be positive")
-    return delta
+    if probe is None:
+        raise ConfigError(f"{context}: target '{s}' could not be parsed as a time expression")
