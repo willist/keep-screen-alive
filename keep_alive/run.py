@@ -25,6 +25,9 @@ def main():
     input_value = " ".join(args.input)
     target = _resolve_target(input_value, config, now)
     _validate_target(target, now)
+    if args.dry_run:
+        _dry_run(target, now)
+        return
     _run_backend(target, now)
 
 
@@ -42,6 +45,11 @@ def _parse_args(argv):
         "--list",
         action="store_true",
         help="list configured aliases and exit",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="resolve and print target without engaging the backend",
     )
     return parser.parse_args(argv)
 
@@ -189,6 +197,20 @@ def _validate_target(target, now):
     if now >= target:
         print(f"{target} is in the past. It is currently {now}")
         sys.exit(1)
+
+
+def _dry_run(target, now):
+    """Print what would happen without engaging the backend.
+
+    Calls get_backend() so the dry-run surfaces the same "No suitable
+    backend found" exit path a real run would hit, but never calls
+    cleanup() or inhibit() on the returned backend.
+    """
+    duration = target - now
+    backend = get_backend()
+    print(f"target: {target:%I:%M%p %Z, %b %d, %Y}")
+    print(f"duration: {_format_duration(duration)}")
+    print(f"backend: {backend.__name__}")
 
 
 def _run_backend(target, now):
