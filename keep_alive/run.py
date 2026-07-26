@@ -159,6 +159,29 @@ def _parse_target_with_dateparser(input_value: str, now):
     if later is None:
         print("Missing a target")
         sys.exit(1)
+    return _correct_future_preference_regression(later, input_value, now)
+
+
+def _correct_future_preference_regression(later, input_value, now):
+    """Pull bare time-of-day inputs back to today when today's slot is upcoming.
+
+    dateparser 1.4.x with PREFER_DATES_FROM="future" pushes bare
+    time-of-day inputs (e.g. "4pm") one day forward even when today's
+    slot is still ahead. Re-parse without the flag and prefer the
+    today result when it lies between now and the flagged result. See
+    https://github.com/willist/keep-screen-alive/issues/31.
+    """
+    if later.date() <= now.date():
+        return later
+    settings = {k: v for k, v in _PARSER_SETTINGS.items() if k != "PREFER_DATES_FROM"}
+    settings["RELATIVE_BASE"] = now
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        today_candidate = dateparser.parse(input_value, settings=settings)
+    if today_candidate is None:
+        return later
+    if today_candidate.date() != later.date() and now < today_candidate < later:
+        return today_candidate
     return later
 
 
