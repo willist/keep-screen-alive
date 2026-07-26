@@ -7,8 +7,7 @@ and returns a Config with parsed Rule objects from keep_alive.rules.
 TOML shape:
 
     [[rule]]                       # global rules
-    action = "relative_duration"
-    duration = "30m"
+    target = "30m"
 
     [[alias]]
     name = "work"
@@ -17,11 +16,10 @@ TOML shape:
         start = "05:00"
         end   = "16:00"
         days  = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-        action = "until_window_end"
+        target = "end"
 
         [[alias.rule]]
-        action = "relative_duration"
-        duration = "2h"
+        target = "2h"
 
 Missing config file returns an empty Config. Invalid config raises
 ConfigError with a message naming the offending field.
@@ -33,17 +31,13 @@ import os
 import tomllib
 import warnings
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import dateparser
 
-from keep_alive.rules import WEEKDAY_SET, Action, Condition, Rule
-
-VALID_ACTION_KINDS = frozenset(
-    {"until_window_end", "extend_window", "relative_duration", "absolute_time"}
-)
+from keep_alive.rules import WEEKDAY_SET, Condition, Rule
 
 
 @dataclass
@@ -76,11 +70,11 @@ def load_config(path: Path | str | None = None) -> Config:
         with config_path.open("rb") as f:
             data = tomllib.load(f)
     except tomllib.TOMLDecodeError as e:
-        raise ConfigError(f"invalid TOML in {config_path}: {e}") from e
-    return _parse_config(data)
+        raise ConfigError(f"invalid TOML in {config_path}: {e}") from None
+    return _parse_config(data, config_path)
 
 
-def _parse_config(data: dict[str, Any]) -> Config:
+def _parse_config(data: dict[str, Any], config_path: Path | None = None) -> Config:
     raw_aliases = data.get("alias", [])
     if not isinstance(raw_aliases, list):
         raise ConfigError("'alias' must be an array of tables (use [[alias]])")
@@ -99,7 +93,8 @@ def _parse_config(data: dict[str, Any]) -> Config:
         if not isinstance(raw_rules, list):
             raise ConfigError(f"alias '{name}': 'rule' must be an array of tables")
         rules = [
-            _parse_rule(r, context=f"alias '{name}' rule {j + 1}") for j, r in enumerate(raw_rules)
+            _parse_rule(r, context=f"alias '{name}' rule {j + 1}", config_path=config_path)
+            for j, r in enumerate(raw_rules)
         ]
         aliases[name] = rules
 
@@ -107,20 +102,35 @@ def _parse_config(data: dict[str, Any]) -> Config:
     if not isinstance(raw_globals, list):
         raise ConfigError("'rule' must be an array of tables (use [[rule]])")
     global_rules = [
-        _parse_rule(r, context=f"global rule {j + 1}") for j, r in enumerate(raw_globals)
+        _parse_rule(r, context=f"global rule {j + 1}", config_path=config_path)
+        for j, r in enumerate(raw_globals)
     ]
 
     return Config(aliases=aliases, global_rules=global_rules)
 
 
-def _parse_rule(d: dict[str, Any], context: str) -> Rule:
+def _parse_rule(d: dict[str, Any], context: str, config_path: Path | None = None) -> Rule:
     if not isinstance(d, dict):
         raise ConfigError(f"{context}: must be a table")
-    if "action" not in d:
-        raise ConfigError(f"{context}: missing 'action'")
+    if "action" in d:
+        raise _migration_error(d, context, config_path)
+    if "target" not in d:
+        raise ConfigError(f"{context}: missing 'target'")
+    target = d["target"]
+    if not isinstance(target, str) or not target.strip():
+        raise ConfigError(f"{context}: 'target' must be a non-empty string")
+
     condition = _parse_condition(d, context)
-    action = _parse_action(d, context)
-    return Rule(condition=condition, action=action)
+
+    if target == "end":
+        if condition is None or condition.start is None or condition.end is None:
+            raise ConfigError(
+                f"{context}: target='end' requires condition with both 'start' and 'end'"
+            )
+    else:
+        _validate_target_expression(target, context)
+
+    return Rule(condition=condition, target=target)
 
 
 def _parse_condition(d: dict[str, Any], context: str) -> Condition | None:
@@ -146,29 +156,7 @@ def _parse_condition(d: dict[str, Any], context: str) -> Condition | None:
     return Condition(start=start, end=end, days=days)
 
 
-def _parse_action(d: dict[str, Any], context: str) -> Action:
-    kind = d["action"]
-    if kind not in VALID_ACTION_KINDS:
-        raise ConfigError(
-            f"{context}: invalid action '{kind}'; must be one of {sorted(VALID_ACTION_KINDS)}"
-        )
-
-    duration = _parse_duration(d["duration"], f"{context}: 'duration'") if "duration" in d else None
-    abs_time = _parse_time(d["time"], f"{context}: 'time'") if "time" in d else None
-
-    if kind in ("until_window_end", "extend_window") and "end" not in d:
-        raise ConfigError(f"{context}: action '{kind}' requires 'end'")
-    if kind == "extend_window" and duration is None:
-        raise ConfigError(f"{context}: action 'extend_window' requires 'duration'")
-    if kind == "relative_duration" and duration is None:
-        raise ConfigError(f"{context}: action 'relative_duration' requires 'duration'")
-    if kind == "absolute_time" and abs_time is None:
-        raise ConfigError(f"{context}: action 'absolute_time' requires 'time'")
-
-    return Action(kind=kind, duration=duration, time=abs_time)
-
-
-def _parse_time(s: str, context: str) -> time:
+def _parse_time(s: str, context: str):
     if not isinstance(s, str):
         raise ConfigError(f"{context}: must be a string, got {type(s).__name__}")
     try:
@@ -177,18 +165,72 @@ def _parse_time(s: str, context: str) -> time:
         raise ConfigError(f"{context}: invalid time '{s}', must be HH:MM") from None
 
 
-def _parse_duration(s: str, context: str) -> timedelta:
-    if not isinstance(s, str):
-        raise ConfigError(f"{context}: must be a string, got {type(s).__name__}")
-    base = datetime(2000, 1, 1)
+def _validate_target_expression(s: str, context: str) -> None:
+    """Smoke-test the target expression with dateparser so config load fails
+    on obviously broken inputs like `target = "banana"`.
+
+    Syntax check only — actual resolution happens at runtime against a real
+    `now`. Inputs dateparser can't make sense of are rejected here.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        future = dateparser.parse(
-            s, settings={"RELATIVE_BASE": base, "PREFER_DATES_FROM": "future"}
+        probe = dateparser.parse(
+            s,
+            settings={"PREFER_DATES_FROM": "future", "RETURN_AS_TIMEZONE_AWARE": True},
         )
-    if future is None:
-        raise ConfigError(f"{context}: invalid duration '{s}'")
-    delta = future - base
-    if delta.total_seconds() <= 0:
-        raise ConfigError(f"{context}: duration '{s}' must be positive")
-    return delta
+    if probe is None:
+        raise ConfigError(f"{context}: target '{s}' could not be parsed as a time expression")
+
+
+def _migration_error(d: dict[str, Any], context: str, config_path: Path | None) -> ConfigError:
+    """Build an actionable error showing the exact TOML rewrite for the
+    failing rule. Called when an old-schema `action` field is detected.
+    """
+    kind = d.get("action", "<unknown>")
+    rewrite_lines = []
+
+    # Preserve condition fields (start/end/days) in their original form.
+    for key in ("start", "end", "days"):
+        if key in d:
+            rewrite_lines.append(_toml_field(key, d[key]))
+
+    # Suggest the new `target` line based on the old action kind.
+    if kind == "relative_duration":
+        duration = d.get("duration", "<duration>")
+        rewrite_lines.append(f'target = "{duration}"')
+    elif kind == "absolute_time":
+        time_val = d.get("time", "<time>")
+        rewrite_lines.append(f'target = "{time_val}"')
+    elif kind == "until_window_end":
+        rewrite_lines.append('target = "end"')
+    elif kind == "extend_window":
+        end_val = d.get("end", "<end>")
+        duration = d.get("duration", "<duration>")
+        rewrite_lines.append(
+            f'# "extend_window" has no direct equivalent. Try: target = "{end_val} + {duration}"'
+        )
+    else:
+        rewrite_lines.append(f"# unknown action kind {kind!r}; see README migration table")
+
+    suggestion = "\n".join(f"    {line}" for line in rewrite_lines)
+    path_line = f"\nConfig file: {config_path}\n" if config_path else "\n"
+    message = (
+        f"{context}: 'action' field was removed in favor of 'target'.\n"
+        f"\n"
+        f"Rewrite this rule as:\n"
+        f"\n"
+        f"{suggestion}\n"
+        f"{path_line}"
+        f"See the README migration table for the full set of translations."
+    )
+    return ConfigError(message.rstrip())
+
+
+def _toml_field(key: str, value: Any) -> str:
+    """Render a key/value pair as a single TOML line."""
+    if isinstance(value, str):
+        return f'{key} = "{value}"'
+    if isinstance(value, list):
+        inner = ", ".join(f'"{v}"' for v in value)
+        return f"{key} = [{inner}]"
+    return f"{key} = {value}"

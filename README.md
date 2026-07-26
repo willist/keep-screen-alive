@@ -48,8 +48,7 @@ Define named aliases that resolve based on time-of-day and weekday. Each alias i
 ```toml
 # global rules: defaults for bare invocation and unmatched aliases
 [[rule]]
-action = "relative_duration"
-duration = "30m"
+target = "30m"
 
 [[alias]]
 name = "work"
@@ -58,11 +57,10 @@ name = "work"
     start = "05:00"
     end = "16:00"
     days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-    action = "until_window_end"
+    target = "end"
 
     [[alias.rule]]
-    action = "relative_duration"
-    duration = "2h"
+    target = "2h"
 
 [[alias]]
 name = "personal"
@@ -70,18 +68,16 @@ name = "personal"
     [[alias.rule]]
     start = "09:00"
     end = "21:00"
-    action = "until_window_end"
+    target = "end"
 
     [[alias.rule]]
-    action = "relative_duration"
-    duration = "1h"
+    target = "1h"
 
 [[alias]]
 name = "project"
 
     [[alias.rule]]
-    action = "relative_duration"
-    duration = "4h"
+    target = "4h"
 ```
 
 `keep-alive work` on a weekday between 5am and 4pm keeps awake until 4pm; otherwise for 2h. `keep-alive personal` between 9am and 9pm keeps awake until 9pm; otherwise for 1h. `keep-alive project` keeps awake for 4h unconditionally. Bare `keep-alive` uses global rules.
@@ -101,16 +97,17 @@ global
   always → for 30m
 ```
 
-### Actions
+### Targets
 
-| Kind | Required fields | Target |
-| --- | --- | --- |
-| `relative_duration` | `duration` | now plus duration |
-| `absolute_time` | `time` | today at HH:MM |
-| `until_window_end` | condition's `end` | today at the window's end |
-| `extend_window` | condition's `end`, `duration` | window end plus duration |
+Each rule has a `target` — a dateparser expression that resolves to a datetime. Targets flow through the same resolver as bare CLI input, so anything you can type at the prompt works as a target.
 
-Durations are parsed by [dateparser](https://pypi.org/project/dateparser/): `2h`, `30m`, `1h30m`, `1d`, `45 minutes`, etc.
+| Target | Resolves to |
+| --- | --- |
+| `"2h"`, `"30m"`, `"1h30m"` | now plus duration |
+| `"4pm"`, `"16:00"` | today at the given time |
+| `"end"` (requires `start` + `end`) | today at the condition's window end |
+
+Durations and time-of-day formats are parsed by [dateparser](https://pypi.org/project/dateparser/): `2h`, `30m`, `1h30m`, `1d`, `45 minutes`, `4pm`, `16:00`, etc.
 
 ### Conditions
 
@@ -122,6 +119,17 @@ Optional. Omit all fields for an unconditional rule (always matches).
 ### Limitations
 
 - Overnight windows (e.g. `start = "22:00"`, `end = "02:00"`) aren't supported.
+
+### Migration from `action = "..."`
+
+Versions before 0.4 used an `action` field with kinds like `relative_duration` and `until_window_end`. That schema was removed in favor of `target`. To migrate, replace each rule's `action` (and accompanying fields) with a single `target`:
+
+| Old | New |
+| --- | --- |
+| `action = "relative_duration"`<br>`duration = "2h"` | `target = "2h"` |
+| `action = "absolute_time"`<br>`time = "16:00"` | `target = "16:00"` |
+| `action = "until_window_end"`<br>(with `start` + `end`) | `target = "end"` |
+| `action = "extend_window"`<br>(with `end` + `duration`) | No direct equivalent — use an explicit target expression like `"17:00 + 1h"` |
 
 ## Development
 

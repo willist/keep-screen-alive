@@ -1,5 +1,4 @@
 import re
-from datetime import time, timedelta
 from pathlib import Path
 
 import pytest
@@ -20,8 +19,7 @@ def _write(tmp_path, content):
 
 VALID_CONFIG = """\
 [[rule]]
-action = "relative_duration"
-duration = "30m"
+target = "30m"
 
 [[alias]]
 name = "work"
@@ -30,11 +28,10 @@ name = "work"
     start = "05:00"
     end = "16:00"
     days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-    action = "until_window_end"
+    target = "end"
 
     [[alias.rule]]
-    action = "relative_duration"
-    duration = "2h"
+    target = "2h"
 
 [[alias]]
 name = "personal"
@@ -42,12 +39,10 @@ name = "personal"
     [[alias.rule]]
     start = "05:00"
     end = "19:00"
-    action = "absolute_time"
-    time = "16:00"
+    target = "16:00"
 
     [[alias.rule]]
-    action = "relative_duration"
-    duration = "1h"
+    target = "1h"
 """
 
 
@@ -64,33 +59,30 @@ class TestLoadValidConfig:
         cfg = load_config(p)
         rule = cfg.global_rules[0]
         assert rule.condition is None
-        assert rule.action.kind == "relative_duration"
-        assert rule.action.duration == timedelta(minutes=30)
+        assert rule.target == "30m"
 
     def test_alias_with_condition_parsed(self, tmp_path):
         p = _write(tmp_path, VALID_CONFIG)
         cfg = load_config(p)
         rule = cfg.aliases["work"][0]
         assert rule.condition is not None
-        assert rule.condition.start == time(5, 0)
-        assert rule.condition.end == time(16, 0)
+        assert rule.condition.start == __import__("datetime").time(5, 0)
+        assert rule.condition.end == __import__("datetime").time(16, 0)
         assert rule.condition.days == {"Mon", "Tue", "Wed", "Thu", "Fri"}
-        assert rule.action.kind == "until_window_end"
+        assert rule.target == "end"
 
     def test_alias_unconditional_rule_parsed(self, tmp_path):
         p = _write(tmp_path, VALID_CONFIG)
         cfg = load_config(p)
         rule = cfg.aliases["work"][1]
         assert rule.condition is None
-        assert rule.action.kind == "relative_duration"
-        assert rule.action.duration == timedelta(hours=2)
+        assert rule.target == "2h"
 
-    def test_absolute_time_action_parsed(self, tmp_path):
+    def test_absolute_time_target_parsed(self, tmp_path):
         p = _write(tmp_path, VALID_CONFIG)
         cfg = load_config(p)
         rule = cfg.aliases["personal"][0]
-        assert rule.action.kind == "absolute_time"
-        assert rule.action.time == time(16, 0)
+        assert rule.target == "16:00"
 
 
 class TestMissingAndEmpty:
@@ -129,67 +121,100 @@ class TestAliasErrors:
 
 
 class TestRuleErrors:
-    def test_rule_missing_action(self, tmp_path):
+    def test_rule_missing_target(self, tmp_path):
         p = _write(
             tmp_path,
             '[[alias]]\nname = "x"\n[[alias.rule]]\nstart = "09:00"\n',
         )
-        with pytest.raises(ConfigError, match="missing 'action'"):
+        with pytest.raises(ConfigError, match="missing 'target'"):
             load_config(p)
 
-    def test_invalid_action_kind(self, tmp_path):
+    def test_old_action_field_rejected_with_migration_pointer(self, tmp_path):
         p = _write(
             tmp_path,
-            '[[alias]]\nname = "x"\n[[alias.rule]]\naction = "fly"\n',
+            '[[alias]]\nname = "x"\n'
+            '[[alias.rule]]\nstart = "09:00"\nend = "17:00"\n'
+            'action = "until_window_end"\n',
         )
-        with pytest.raises(ConfigError, match="invalid action 'fly'"):
+        with pytest.raises(ConfigError) as exc_info:
             load_config(p)
+        msg = str(exc_info.value)
+        # Names the failing rule.
+        assert "alias 'x' rule 1" in msg
+        # Names the file so the user knows what to edit.
+        assert str(p) in msg
+        # Shows the exact rewrite, not just a vague pointer.
+        assert 'target = "end"' in msg
+        assert 'start = "09:00"' in msg
+        assert 'end = "17:00"' in msg
 
-    def test_global_rule_missing_action(self, tmp_path):
+    def test_migration_error_for_relative_duration(self, tmp_path):
+        p = _write(
+            tmp_path,
+            '[[alias]]\nname = "x"\n'
+            '[[alias.rule]]\naction = "relative_duration"\nduration = "2h"\n',
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(p)
+        assert 'target = "2h"' in str(exc_info.value)
+
+    def test_migration_error_for_absolute_time(self, tmp_path):
+        p = _write(
+            tmp_path,
+            '[[alias]]\nname = "x"\n[[alias.rule]]\naction = "absolute_time"\ntime = "16:00"\n',
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(p)
+        assert 'target = "16:00"' in str(exc_info.value)
+
+    def test_migration_error_for_extend_window_notes_no_equivalent(self, tmp_path):
+        p = _write(
+            tmp_path,
+            '[[alias]]\nname = "x"\n'
+            '[[alias.rule]]\nstart = "09:00"\nend = "17:00"\n'
+            'action = "extend_window"\nduration = "1h"\n',
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(p)
+        msg = str(exc_info.value)
+        assert "no direct equivalent" in msg
+        assert 'target = "17:00 + 1h"' in msg
+
+    def test_global_rule_missing_target(self, tmp_path):
         p = _write(tmp_path, '[[rule]]\nstart = "09:00"\n')
-        with pytest.raises(ConfigError, match="global rule 1.*missing 'action'"):
+        with pytest.raises(ConfigError, match="global rule 1.*missing 'target'"):
             load_config(p)
 
-
-class TestActionParameterErrors:
-    def test_until_window_end_requires_end(self, tmp_path):
+    def test_target_end_requires_start_and_end(self, tmp_path):
         p = _write(
             tmp_path,
-            '[[alias]]\nname = "x"\n[[alias.rule]]\naction = "until_window_end"\n',
+            '[[alias]]\nname = "x"\n[[alias.rule]]\ntarget = "end"\n',
         )
-        with pytest.raises(ConfigError, match="requires 'end'"):
+        with pytest.raises(ConfigError, match="target='end' requires"):
             load_config(p)
 
-    def test_extend_window_requires_end(self, tmp_path):
+    def test_target_end_with_only_start_rejected(self, tmp_path):
         p = _write(
             tmp_path,
-            '[[alias]]\nname = "x"\n[[alias.rule]]\naction = "extend_window"\nduration = "1h"\n',
+            '[[alias]]\nname = "x"\n[[alias.rule]]\nstart = "09:00"\ntarget = "end"\n',
         )
-        with pytest.raises(ConfigError, match="requires 'end'"):
+        with pytest.raises(ConfigError, match="target='end' requires"):
             load_config(p)
 
-    def test_extend_window_requires_duration(self, tmp_path):
+    def test_unparseable_target_rejected(self, tmp_path):
         p = _write(
             tmp_path,
-            '[[alias]]\nname = "x"\n[[alias.rule]]\naction = "extend_window"\nend = "17:00"\n',
+            '[[alias]]\nname = "x"\n[[alias.rule]]\ntarget = "banana"\n',
         )
-        with pytest.raises(ConfigError, match="requires 'duration'"):
+        with pytest.raises(ConfigError, match="could not be parsed"):
             load_config(p)
 
-    def test_relative_duration_requires_duration(self, tmp_path):
+    def test_empty_target_rejected(self, tmp_path):
         p = _write(
             tmp_path,
-            '[[alias]]\nname = "x"\n[[alias.rule]]\naction = "relative_duration"\n',
+            '[[alias]]\nname = "x"\n[[alias.rule]]\ntarget = ""\n',
         )
-        with pytest.raises(ConfigError, match="requires 'duration'"):
-            load_config(p)
-
-    def test_absolute_time_requires_time(self, tmp_path):
-        p = _write(
-            tmp_path,
-            '[[alias]]\nname = "x"\n[[alias.rule]]\naction = "absolute_time"\n',
-        )
-        with pytest.raises(ConfigError, match="requires 'time'"):
+        with pytest.raises(ConfigError, match="must be a non-empty string"):
             load_config(p)
 
 
@@ -199,7 +224,7 @@ class TestFieldValidation:
             tmp_path,
             '[[alias]]\nname = "x"\n'
             '[[alias.rule]]\nstart = "25:00"\nend = "17:00"\n'
-            'action = "until_window_end"\n',
+            'target = "end"\n',
         )
         with pytest.raises(ConfigError, match="invalid time '25:00'"):
             load_config(p)
@@ -209,7 +234,7 @@ class TestFieldValidation:
             tmp_path,
             '[[alias]]\nname = "x"\n'
             '[[alias.rule]]\nstart = "noon"\nend = "17:00"\n'
-            'action = "until_window_end"\n',
+            'target = "end"\n',
         )
         with pytest.raises(ConfigError, match="invalid time 'noon'"):
             load_config(p)
@@ -219,28 +244,10 @@ class TestFieldValidation:
             tmp_path,
             '[[alias]]\nname = "x"\n'
             '[[alias.rule]]\nstart = "09:00"\nend = "17:00"\n'
-            'days = ["Mon", "Funday"]\naction = "until_window_end"\n',
+            'days = ["Mon", "Funday"]\ntarget = "end"\n',
         )
         with pytest.raises(ConfigError, match="invalid day name"):
             load_config(p)
-
-    def test_invalid_duration(self, tmp_path):
-        p = _write(
-            tmp_path,
-            '[[alias]]\nname = "x"\n'
-            '[[alias.rule]]\naction = "relative_duration"\nduration = "banana"\n',
-        )
-        with pytest.raises(ConfigError, match="invalid duration 'banana'"):
-            load_config(p)
-
-    def test_duration_accepts_compound_form(self, tmp_path):
-        p = _write(
-            tmp_path,
-            '[[alias]]\nname = "x"\n'
-            '[[alias.rule]]\naction = "relative_duration"\nduration = "1h30m"\n',
-        )
-        cfg = load_config(p)
-        assert cfg.aliases["x"][0].action.duration == timedelta(hours=1, minutes=30)
 
 
 class TestPathResolution:
@@ -265,49 +272,6 @@ class TestPathResolution:
         assert "work" in cfg.aliases
 
 
-class TestActionKindCoverage:
-    """Verify all four action kinds round-trip through the loader."""
-
-    @pytest.mark.parametrize(
-        "rule_toml,kind,attr,expected",
-        [
-            (
-                'action = "until_window_end"\nstart = "09:00"\nend = "17:00"\n',
-                "until_window_end",
-                "kind",
-                "until_window_end",
-            ),
-            (
-                'action = "extend_window"\nstart = "09:00"\nend = "17:00"\nduration = "1h"\n',
-                "extend_window",
-                "duration",
-                timedelta(hours=1),
-            ),
-            (
-                'action = "relative_duration"\nduration = "30m"\n',
-                "relative_duration",
-                "duration",
-                timedelta(minutes=30),
-            ),
-            (
-                'action = "absolute_time"\ntime = "16:00"\n',
-                "absolute_time",
-                "time",
-                time(16, 0),
-            ),
-        ],
-    )
-    def test_action_kind_round_trips(self, tmp_path, rule_toml, kind, attr, expected):
-        p = _write(
-            tmp_path,
-            f'[[alias]]\nname = "x"\n[[alias.rule]]\n{rule_toml}',
-        )
-        cfg = load_config(p)
-        action = cfg.aliases["x"][0].action
-        assert action.kind == kind
-        assert getattr(action, attr) == expected
-
-
 class TestReadmeExample:
     """The TOML example in README.md must load successfully."""
 
@@ -330,12 +294,11 @@ class TestReadmeExample:
         p = tmp_path / "readme.toml"
         p.write_text(self._readme_toml())
         cfg = load_config(p)
-        # Work: first rule has window + until_window_end, second is relative fallback.
+        # Work: first rule has window + target=end, second is duration fallback.
         r1, r2 = cfg.aliases["work"]
-        assert r1.condition.start == time(5, 0)
-        assert r1.condition.end == time(16, 0)
+        assert r1.condition.start == __import__("datetime").time(5, 0)
+        assert r1.condition.end == __import__("datetime").time(16, 0)
         assert r1.condition.days == {"Mon", "Tue", "Wed", "Thu", "Fri"}
-        assert r1.action.kind == "until_window_end"
+        assert r1.target == "end"
         assert r2.condition is None
-        assert r2.action.kind == "relative_duration"
-        assert r2.action.duration == timedelta(hours=2)
+        assert r2.target == "2h"

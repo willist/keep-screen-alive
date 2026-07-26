@@ -6,16 +6,16 @@ import pytest
 
 from keep_alive import run
 from keep_alive.config import Config, ConfigError
-from keep_alive.rules import Action, Condition, Rule
+from keep_alive.rules import Condition, Rule
 
 # 2024-01-15 is a Monday. Fixed timestamp = Monday 2024-01-15 12:00 UTC.
 PINNED_NOW = datetime(2024, 1, 15, 12, 0, tzinfo=UTC)
 
 
-def _duration_rule(duration):
+def _target_rule(target):
     return Rule(
         condition=None,
-        action=Action(kind="relative_duration", duration=duration),
+        target=target,
     )
 
 
@@ -56,7 +56,7 @@ def mock_config_loader(monkeypatch):
 class TestResolveTarget:
     def test_alias_match_returns_target(self):
         config = Config(
-            aliases={"work": [_duration_rule(timedelta(hours=2))]},
+            aliases={"work": [_target_rule("2h")]},
         )
         target = run._resolve_target("work", config, PINNED_NOW)
         assert target == PINNED_NOW + timedelta(hours=2)
@@ -68,11 +68,11 @@ class TestResolveTarget:
                 "work": [
                     Rule(
                         condition=Condition(start=time(9, 0), end=time(10, 0)),
-                        action=Action(kind="until_window_end"),
+                        target="end",
                     )
                 ]
             },
-            global_rules=[_duration_rule(timedelta(hours=1))],
+            global_rules=[_target_rule("1h")],
         )
         target = run._resolve_target("work", config, PINNED_NOW)
         assert target == PINNED_NOW + timedelta(hours=1)
@@ -83,7 +83,7 @@ class TestResolveTarget:
                 "work": [
                     Rule(
                         condition=Condition(start=time(9, 0), end=time(10, 0)),
-                        action=Action(kind="until_window_end"),
+                        target="end",
                     )
                 ]
             },
@@ -97,7 +97,7 @@ class TestResolveTarget:
                 "work": [
                     Rule(
                         condition=Condition(start=time(9, 0), end=time(10, 0)),
-                        action=Action(kind="until_window_end"),
+                        target="end",
                     )
                 ]
             },
@@ -141,7 +141,7 @@ class TestResolveTarget:
 
     def test_empty_input_uses_global_rules(self):
         config = Config(
-            global_rules=[_duration_rule(timedelta(minutes=30))],
+            global_rules=[_target_rule("30m")],
         )
         target = run._resolve_target("", config, PINNED_NOW)
         assert target == PINNED_NOW + timedelta(minutes=30)
@@ -249,7 +249,7 @@ class TestMain:
         self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
     ):
         mock_config_loader["config"] = Config(
-            aliases={"work": [_duration_rule(timedelta(hours=2))]},
+            aliases={"work": [_target_rule("2h")]},
         )
         self._run_main(monkeypatch, ["work"])
 
@@ -271,11 +271,11 @@ class TestMain:
                 "work": [
                     Rule(
                         condition=Condition(start=time(9, 0), end=time(10, 0)),
-                        action=Action(kind="until_window_end"),
+                        target="end",
                     )
                 ]
             },
-            global_rules=[_duration_rule(timedelta(minutes=30))],
+            global_rules=[_target_rule("30m")],
         )
         self._run_main(monkeypatch, ["work"])
         # 30 minutes = 1800 seconds
@@ -289,7 +289,7 @@ class TestMain:
                 "work": [
                     Rule(
                         condition=Condition(start=time(9, 0), end=time(10, 0)),
-                        action=Action(kind="until_window_end"),
+                        target="end",
                     )
                 ]
             },
@@ -352,7 +352,7 @@ class TestDryRun:
         self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
     ):
         mock_config_loader["config"] = Config(
-            aliases={"work": [_duration_rule(timedelta(hours=2))]},
+            aliases={"work": [_target_rule("2h")]},
         )
         mock_backend.__name__ = "FakeBackend"
         self._run_main(monkeypatch, ["--dry-run", "work"])
@@ -387,7 +387,7 @@ class TestDryRun:
         self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
     ):
         mock_config_loader["config"] = Config(
-            aliases={"work": [_duration_rule(timedelta(hours=2))]},
+            aliases={"work": [_target_rule("2h")]},
         )
         self._run_main(monkeypatch, ["--list", "--dry-run"])
         out = capsys.readouterr().out
@@ -464,24 +464,24 @@ class TestList:
                             end=time(16, 0),
                             days={"Mon", "Tue", "Wed", "Thu", "Fri"},
                         ),
-                        action=Action(kind="until_window_end"),
+                        target="end",
                     ),
                     Rule(
                         condition=None,
-                        action=Action(kind="relative_duration", duration=timedelta(hours=2)),
+                        target="2h",
                     ),
                 ],
                 "personal": [
                     Rule(
                         condition=Condition(start=time(5, 0), end=time(19, 0)),
-                        action=Action(kind="absolute_time", time=time(16, 0)),
+                        target="16:00",
                     ),
                 ],
             },
             global_rules=[
                 Rule(
                     condition=None,
-                    action=Action(kind="relative_duration", duration=timedelta(minutes=30)),
+                    target="30m",
                 )
             ],
         )
@@ -503,10 +503,7 @@ class TestList:
 
     def test_list_respects_config_flag(self, monkeypatch, capsys, mock_backend, mock_now, tmp_path):
         config_file = tmp_path / "test.toml"
-        config_file.write_text(
-            '[[alias]]\nname = "fromfile"\n'
-            '[[alias.rule]]\naction = "relative_duration"\nduration = "30m"\n'
-        )
+        config_file.write_text('[[alias]]\nname = "fromfile"\n[[alias.rule]]\ntarget = "30m"\n')
         monkeypatch.setattr("sys.argv", ["keep-alive", "--list", "--config", str(config_file)])
         run.main()
         out = capsys.readouterr().out
@@ -518,7 +515,7 @@ class TestList:
     ):
         # --list with a positional input should list, not resolve
         mock_config_loader["config"] = Config(
-            aliases={"work": [_duration_rule(timedelta(hours=2))]},
+            aliases={"work": [_target_rule("2h")]},
         )
         self._run_main(monkeypatch, ["--list", "work"])
         out = capsys.readouterr().out
@@ -557,32 +554,18 @@ class TestListFormatting:
         assert run._format_condition(condition) == expected
 
     @pytest.mark.parametrize(
-        "action,condition,expected",
+        "target,condition,expected",
         [
-            (
-                Action(kind="relative_duration", duration=timedelta(hours=2)),
-                None,
-                "for 2h",
-            ),
-            (
-                Action(kind="absolute_time", time=time(16, 0)),
-                None,
-                "at 16:00",
-            ),
-            (
-                Action(kind="until_window_end"),
-                Condition(start=time(9, 0), end=time(17, 0)),
-                "until 17:00",
-            ),
-            (
-                Action(kind="extend_window", duration=timedelta(hours=1)),
-                Condition(start=time(9, 0), end=time(17, 0)),
-                "until 17:00 + 1h",
-            ),
+            ("2h", None, "for 2h"),
+            ("1h30m", None, "for 1h30m"),
+            ("16:00", None, "at 16:00"),
+            ("4pm", None, "at 4pm"),
+            ("end", Condition(start=time(9, 0), end=time(17, 0)), "until 17:00"),
         ],
     )
-    def test_format_action(self, action, condition, expected):
-        assert run._format_action(action, condition) == expected
+    def test_format_target(self, target, condition, expected):
+        rule = Rule(condition=condition, target=target)
+        assert run._format_target(rule) == expected
 
     @pytest.mark.parametrize(
         "td,expected",
