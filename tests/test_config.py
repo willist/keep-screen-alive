@@ -132,10 +132,53 @@ class TestRuleErrors:
     def test_old_action_field_rejected_with_migration_pointer(self, tmp_path):
         p = _write(
             tmp_path,
-            '[[alias]]\nname = "x"\n[[alias.rule]]\naction = "relative_duration"\n',
+            '[[alias]]\nname = "x"\n'
+            '[[alias.rule]]\nstart = "09:00"\nend = "17:00"\n'
+            'action = "until_window_end"\n',
         )
-        with pytest.raises(ConfigError, match="'action' field removed in favor of 'target'"):
+        with pytest.raises(ConfigError) as exc_info:
             load_config(p)
+        msg = str(exc_info.value)
+        # Names the failing rule.
+        assert "alias 'x' rule 1" in msg
+        # Names the file so the user knows what to edit.
+        assert str(p) in msg
+        # Shows the exact rewrite, not just a vague pointer.
+        assert 'target = "end"' in msg
+        assert 'start = "09:00"' in msg
+        assert 'end = "17:00"' in msg
+
+    def test_migration_error_for_relative_duration(self, tmp_path):
+        p = _write(
+            tmp_path,
+            '[[alias]]\nname = "x"\n'
+            '[[alias.rule]]\naction = "relative_duration"\nduration = "2h"\n',
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(p)
+        assert 'target = "2h"' in str(exc_info.value)
+
+    def test_migration_error_for_absolute_time(self, tmp_path):
+        p = _write(
+            tmp_path,
+            '[[alias]]\nname = "x"\n[[alias.rule]]\naction = "absolute_time"\ntime = "16:00"\n',
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(p)
+        assert 'target = "16:00"' in str(exc_info.value)
+
+    def test_migration_error_for_extend_window_notes_no_equivalent(self, tmp_path):
+        p = _write(
+            tmp_path,
+            '[[alias]]\nname = "x"\n'
+            '[[alias.rule]]\nstart = "09:00"\nend = "17:00"\n'
+            'action = "extend_window"\nduration = "1h"\n',
+        )
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(p)
+        msg = str(exc_info.value)
+        assert "no direct equivalent" in msg
+        assert 'target = "17:00 + 1h"' in msg
 
     def test_global_rule_missing_target(self, tmp_path):
         p = _write(tmp_path, '[[rule]]\nstart = "09:00"\n')

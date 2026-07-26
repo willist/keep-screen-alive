@@ -71,10 +71,10 @@ def load_config(path: Path | str | None = None) -> Config:
             data = tomllib.load(f)
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"invalid TOML in {config_path}: {e}") from None
-    return _parse_config(data)
+    return _parse_config(data, config_path)
 
 
-def _parse_config(data: dict[str, Any]) -> Config:
+def _parse_config(data: dict[str, Any], config_path: Path | None = None) -> Config:
     raw_aliases = data.get("alias", [])
     if not isinstance(raw_aliases, list):
         raise ConfigError("'alias' must be an array of tables (use [[alias]])")
@@ -93,7 +93,8 @@ def _parse_config(data: dict[str, Any]) -> Config:
         if not isinstance(raw_rules, list):
             raise ConfigError(f"alias '{name}': 'rule' must be an array of tables")
         rules = [
-            _parse_rule(r, context=f"alias '{name}' rule {j + 1}") for j, r in enumerate(raw_rules)
+            _parse_rule(r, context=f"alias '{name}' rule {j + 1}", config_path=config_path)
+            for j, r in enumerate(raw_rules)
         ]
         aliases[name] = rules
 
@@ -101,19 +102,18 @@ def _parse_config(data: dict[str, Any]) -> Config:
     if not isinstance(raw_globals, list):
         raise ConfigError("'rule' must be an array of tables (use [[rule]])")
     global_rules = [
-        _parse_rule(r, context=f"global rule {j + 1}") for j, r in enumerate(raw_globals)
+        _parse_rule(r, context=f"global rule {j + 1}", config_path=config_path)
+        for j, r in enumerate(raw_globals)
     ]
 
     return Config(aliases=aliases, global_rules=global_rules)
 
 
-def _parse_rule(d: dict[str, Any], context: str) -> Rule:
+def _parse_rule(d: dict[str, Any], context: str, config_path: Path | None = None) -> Rule:
     if not isinstance(d, dict):
         raise ConfigError(f"{context}: must be a table")
     if "action" in d:
-        raise ConfigError(
-            f"{context}: 'action' field removed in favor of 'target' (see README migration table)"
-        )
+        raise _migration_error(d, context, config_path)
     if "target" not in d:
         raise ConfigError(f"{context}: missing 'target'")
     target = d["target"]
@@ -180,3 +180,57 @@ def _validate_target_expression(s: str, context: str) -> None:
         )
     if probe is None:
         raise ConfigError(f"{context}: target '{s}' could not be parsed as a time expression")
+
+
+def _migration_error(d: dict[str, Any], context: str, config_path: Path | None) -> ConfigError:
+    """Build an actionable error showing the exact TOML rewrite for the
+    failing rule. Called when an old-schema `action` field is detected.
+    """
+    kind = d.get("action", "<unknown>")
+    rewrite_lines = []
+
+    # Preserve condition fields (start/end/days) in their original form.
+    for key in ("start", "end", "days"):
+        if key in d:
+            rewrite_lines.append(_toml_field(key, d[key]))
+
+    # Suggest the new `target` line based on the old action kind.
+    if kind == "relative_duration":
+        duration = d.get("duration", "<duration>")
+        rewrite_lines.append(f'target = "{duration}"')
+    elif kind == "absolute_time":
+        time_val = d.get("time", "<time>")
+        rewrite_lines.append(f'target = "{time_val}"')
+    elif kind == "until_window_end":
+        rewrite_lines.append('target = "end"')
+    elif kind == "extend_window":
+        end_val = d.get("end", "<end>")
+        duration = d.get("duration", "<duration>")
+        rewrite_lines.append(
+            f'# "extend_window" has no direct equivalent. Try: target = "{end_val} + {duration}"'
+        )
+    else:
+        rewrite_lines.append(f"# unknown action kind {kind!r}; see README migration table")
+
+    suggestion = "\n".join(f"    {line}" for line in rewrite_lines)
+    path_line = f"\nConfig file: {config_path}\n" if config_path else "\n"
+    message = (
+        f"{context}: 'action' field was removed in favor of 'target'.\n"
+        f"\n"
+        f"Rewrite this rule as:\n"
+        f"\n"
+        f"{suggestion}\n"
+        f"{path_line}"
+        f"See the README migration table for the full set of translations."
+    )
+    return ConfigError(message.rstrip())
+
+
+def _toml_field(key: str, value: Any) -> str:
+    """Render a key/value pair as a single TOML line."""
+    if isinstance(value, str):
+        return f'{key} = "{value}"'
+    if isinstance(value, list):
+        inner = ", ".join(f'"{v}"' for v in value)
+        return f"{key} = [{inner}]"
+    return f"{key} = {value}"
