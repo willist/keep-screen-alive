@@ -40,6 +40,7 @@ dev = [
     "pip-audit>=2.9",
     "pre-commit>=4.3",
     "types-dateparser>=1.2",
+    "click-man>=0.5",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -74,5 +75,8 @@ module = ["gi", "gi.repository.*"]
 ignore_missing_imports = true
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "click>=8.1", "click-man>=0.5", "dateparser>=1.1.8"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
