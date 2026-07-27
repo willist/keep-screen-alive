@@ -349,6 +349,36 @@ def clear_cmd():
     _clear()
 
 
+@cli.command(
+    "install",
+    help="Create a default config file and install shell completions.",
+)
+@click.option(
+    "--shell",
+    "shells",
+    multiple=True,
+    metavar="SHELL",
+    help="shell(s) to install for: zsh, bash, fish, or all. Repeat for multiple "
+    "(e.g. --shell zsh --shell bash). With no --shell: interactive prompt in a "
+    "TTY, otherwise auto-detect from $SHELL.",
+)
+@click.option(
+    "--config-only",
+    is_flag=True,
+    help="only create config, skip completions",
+)
+@click.option(
+    "--completions-only",
+    is_flag=True,
+    help="only install completions, skip config",
+)
+def install_cmd(shells, config_only, completions_only):
+    if not completions_only:
+        _install_config()
+    if not config_only:
+        _install_completions(shells)
+
+
 def _list_config(config: Config) -> None:
     """Print configured aliases with their rules, then return."""
     for name in sorted(config.aliases):
@@ -679,6 +709,159 @@ def _clear():
         os.killpg(pid, signal.SIGTERM)
     _pidfile_path().unlink(missing_ok=True)
     print(f"cleared keep-alive (pid {pid})")
+
+
+_DEFAULT_CONFIG_TEMPLATE = """\
+# keep-alive configuration file
+# Docs: https://github.com/willist/keep-screen-alive#configuration
+
+# Global default — used when no alias matches and keep-alive is invoked bare.
+[[rule]]
+target = "30m"
+
+# Example alias:
+#   [[alias]]
+#   name = "work"
+#     [[alias.rule]]
+#     start = "09:00"
+#     end   = "17:00"
+#     days  = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+#     target = "end"
+"""
+
+
+def _install_config() -> None:
+    """Create a default config file at the standard location if absent."""
+    from keep_alive.config import default_config_path
+
+    path = default_config_path()
+    if path.exists():
+        print(f"config already exists at {path}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_DEFAULT_CONFIG_TEMPLATE)
+    print(f"created config at {path}")
+
+
+_COMPLETION_ENV_VAR = "_KEEP_ALIVE_COMPLETE"
+
+_COMPLETION_PATHS = {
+    "zsh": lambda: (
+        (Path(os.environ.get("XDG_CONFIG_HOME", "")) / "zsh" / "completions")
+        if os.environ.get("XDG_CONFIG_HOME")
+        else Path.home() / ".config" / "zsh" / "completions"
+    ),
+    "bash": lambda: (
+        (Path(os.environ.get("XDG_DATA_HOME", "")) / "bash-completion" / "completions")
+        if os.environ.get("XDG_DATA_HOME")
+        else Path.home() / ".local" / "share" / "bash-completion" / "completions"
+    ),
+    "fish": lambda: (
+        (Path(os.environ.get("XDG_CONFIG_HOME", "")) / "fish" / "completions")
+        if os.environ.get("XDG_CONFIG_HOME")
+        else Path.home() / ".config" / "fish" / "completions"
+    ),
+}
+
+_COMPLETION_FILENAMES = {
+    "zsh": "_keep-alive",
+    "bash": "keep-alive",
+    "fish": "keep-alive.fish",
+}
+
+
+_SUPPORTED_SHELLS = ("zsh", "bash", "fish")
+
+
+def _detect_shell() -> str | None:
+    """Detect the user's shell from $SHELL."""
+    shell_path = os.environ.get("SHELL", "")
+    return Path(shell_path).name if shell_path else None
+
+
+def _generate_completion_source(shell_name: str) -> str:
+    """Generate the completion script for the given shell."""
+    from click.shell_completion import _available_shells
+
+    shell_cls = _available_shells[shell_name]
+    comp = shell_cls(
+        cli=cli,
+        ctx_args={},
+        prog_name="keep-alive",
+        complete_var=_COMPLETION_ENV_VAR,
+    )
+    return comp.source()
+
+
+def _prompt_shells(detected: str | None) -> list[str]:
+    """Interactively prompt the user to pick shells for completion install."""
+    print("Select shells to install completions for:")
+    selected = []
+    for shell in _SUPPORTED_SHELLS:
+        default = shell == detected
+        if click.confirm(f"  {shell}", default=default):
+            selected.append(shell)
+    return selected
+
+
+def _install_completions(shells: tuple[str, ...]) -> None:
+    """Install completion scripts for one or more shells."""
+    if not shells:
+        if sys.stdin.isatty():
+            detected = _detect_shell()
+            shells = tuple(_prompt_shells(detected))
+            if not shells:
+                print("no shells selected; skipping completions")
+                return
+        else:
+            detected = _detect_shell()
+            if detected is None:
+                print("could not detect shell (set $SHELL or use --shell)")
+                return
+            shells = (detected,)
+
+    if "all" in shells:
+        shells = _SUPPORTED_SHELLS
+
+    installed = False
+    for shell_name in shells:
+        if shell_name not in _COMPLETION_PATHS:
+            print(f"unsupported shell '{shell_name}' (supported: zsh, bash, fish)")
+            continue
+        _install_one_shell(shell_name)
+        installed = True
+
+    if not installed:
+        print("no completions installed")
+
+
+def _install_one_shell(shell_name: str) -> None:
+    """Generate and write the completion script for one shell."""
+    source = _generate_completion_source(shell_name)
+    target_dir = _COMPLETION_PATHS[shell_name]()
+    target = target_dir / _COMPLETION_FILENAMES[shell_name]
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target.write_text(source)
+    print(f"installed {shell_name} completions at {target}")
+
+    hint = _completion_hint(shell_name)
+    if hint:
+        print(hint)
+
+
+def _completion_hint(shell_name: str) -> str:
+    """Return a manual step hint for the shell, or empty string."""
+    if shell_name == "zsh":
+        oh_my_zsh = Path.home() / ".oh-my-zsh"
+        if oh_my_zsh.exists():
+            return "restart your shell or run: exec zsh"
+        return (
+            "ensure the completions directory is in your fpath:\n"
+            "  fpath+=(~/.config/zsh/completions)"
+        )
+    if shell_name == "bash":
+        return "completions will load on next login (requires bash-completion)"
+    return "restart your shell or start a new fish session"
 
 
 def main():
