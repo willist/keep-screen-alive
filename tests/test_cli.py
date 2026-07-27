@@ -386,6 +386,47 @@ class TestShellCompletion:
         assert run._complete_aliases(ctx, None, "anything") == []
 
 
+# ---------------------------------------------------------------------
+# Colored help
+# ---------------------------------------------------------------------
+
+
+class TestColoredHelp:
+    """ColoredHelpFormatter applies ANSI codes that click.echo() strips
+    when the terminal does not support color.
+    """
+
+    def test_group_help_has_bold_headings(self):
+        ctx = run.cli.make_context("keep-alive", [])
+        ctx.color = True
+        help_text = run.cli.get_help(ctx)
+        assert "\x1b[1m" in help_text  # bold
+
+    def test_group_help_has_cyan_terms(self):
+        ctx = run.cli.make_context("keep-alive", [])
+        ctx.color = True
+        help_text = run.cli.get_help(ctx)
+        assert "\x1b[36m" in help_text  # cyan
+
+    def test_help_strips_color_when_disabled(self):
+        import io
+
+        import click as click_mod
+
+        ctx = run.cli.make_context("keep-alive", [])
+        buf = io.StringIO()
+        click_mod.echo(run.cli.get_help(ctx), file=buf, color=False)
+        assert "\x1b" not in buf.getvalue()
+
+    def test_subcommand_help_has_color(self):
+        ctx = run.cli.make_context("keep-alive", [])
+        ctx.color = True
+        cmd = run.cli.get_command(ctx, "run")
+        help_text = cmd.get_help(ctx)
+        assert "\x1b[1m" in help_text
+        assert "\x1b[36m" in help_text
+
+
 class TestMain:
     def _run_main(self, monkeypatch, argv):
         run.cli.main(args=argv, prog_name="keep-alive", standalone_mode=False)

@@ -41,6 +41,31 @@ def _complete_aliases(ctx, param, incomplete):
     return [CompletionItem(name) for name in sorted(config.aliases) if name.startswith(incomplete)]
 
 
+class ColoredHelpFormatter(click.HelpFormatter):
+    """HelpFormatter that applies ANSI colors to headings and terms.
+
+    Colors are stripped automatically by click.echo() when the terminal
+    does not support color (piped output, non-TTY, etc.).
+    """
+
+    def write_heading(self, heading):
+        self.write(f"{'':>{self.current_indent}}{click.style(heading, bold=True)}\n")
+
+    def write_dl(self, rows, col_max=30, col_spacing=2):
+        styled_rows = [
+            (click.style(first, fg="cyan") if first else first, second) for first, second in rows
+        ]
+        super().write_dl(styled_rows, col_max, col_spacing)
+
+
+class ColoredContext(click.Context):
+    formatter_class = ColoredHelpFormatter
+
+
+class ColoredCommand(click.Command):
+    context_class = ColoredContext
+
+
 class DefaultGroup(click.Group):
     """A click Group that falls back to a default subcommand when the
     first positional argument isn't a known subcommand name.
@@ -48,6 +73,9 @@ class DefaultGroup(click.Group):
     This preserves the existing UX where ``keep-alive 2h`` is shorthand
     for ``keep-alive run 2h``.
     """
+
+    context_class = ColoredContext
+    command_class = ColoredCommand
 
     def __init__(self, *args, **kwargs):
         self.default_cmd_name = kwargs.pop("default", "")
