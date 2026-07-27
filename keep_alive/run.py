@@ -21,6 +21,14 @@ _PARSER_SETTINGS = {
     "RETURN_AS_TIMEZONE_AWARE": True,
 }
 
+_RUN_EXAMPLES = (
+    f"{click.style('Examples:', bold=True)}\n"
+    "  keep-alive 2h              Keep awake for 2 hours\n"
+    "  keep-alive 4pm             Keep awake until 4pm today\n"
+    "  keep-alive work            Use a configured alias\n"
+    "  keep-alive --dry-run 4pm   Preview without engaging backend"
+)
+
 
 def _load_config_safe(ctx):
     """Load config during shell completion without exiting on error."""
@@ -41,6 +49,37 @@ def _complete_aliases(ctx, param, incomplete):
     return [CompletionItem(name) for name in sorted(config.aliases) if name.startswith(incomplete)]
 
 
+class ColoredHelpFormatter(click.HelpFormatter):
+    """HelpFormatter that applies ANSI colors to headings and terms.
+
+    Colors are stripped automatically by click.echo() when the terminal
+    does not support color (piped output, non-TTY, etc.).
+    """
+
+    def write_heading(self, heading):
+        self.write(f"{'':>{self.current_indent}}{click.style(heading, bold=True)}\n")
+
+    def write_dl(self, rows, col_max=30, col_spacing=2):
+        styled_rows = [
+            (click.style(first, fg="cyan") if first else first, second) for first, second in rows
+        ]
+        super().write_dl(styled_rows, col_max, col_spacing)
+
+
+class ColoredContext(click.Context):
+    formatter_class = ColoredHelpFormatter
+
+
+class ColoredCommand(click.Command):
+    context_class = ColoredContext
+
+    def format_epilog(self, ctx, formatter):
+        if self.epilog:
+            formatter.write_paragraph()
+            formatter.write(self.epilog)
+            formatter.write("\n")
+
+
 class DefaultGroup(click.Group):
     """A click Group that falls back to a default subcommand when the
     first positional argument isn't a known subcommand name.
@@ -49,9 +88,18 @@ class DefaultGroup(click.Group):
     for ``keep-alive run 2h``.
     """
 
+    context_class = ColoredContext
+    command_class = ColoredCommand
+
     def __init__(self, *args, **kwargs):
         self.default_cmd_name = kwargs.pop("default", "")
         super().__init__(*args, **kwargs)
+
+    def format_epilog(self, ctx, formatter):
+        if self.epilog:
+            formatter.write_paragraph()
+            formatter.write(self.epilog)
+            formatter.write("\n")
 
     def parse_args(self, ctx, args):
         if ctx.resilient_parsing:
@@ -93,6 +141,7 @@ class DefaultGroup(click.Group):
     cls=DefaultGroup,
     default="run",
     context_settings={"help_option_names": ["-h", "--help"]},
+    epilog=_RUN_EXAMPLES,
 )
 @click.option(
     "--config",
@@ -106,11 +155,16 @@ class DefaultGroup(click.Group):
 )
 @click.pass_context
 def cli(ctx, config_path):
+    """Keep your screen awake until a target time or alias."""
     ctx.ensure_object(dict)
     ctx.obj["config"] = config_path
 
 
-@cli.command("run")
+@cli.command(
+    "run",
+    epilog=_RUN_EXAMPLES,
+    help="Keep your screen awake until a target time or alias.",
+)
 @click.option(
     "--config",
     "config_path",
@@ -151,7 +205,11 @@ def run_cmd(ctx, config_path, dry_run, list_flag, input):
     _run_backend(target, now, input_value)
 
 
-@cli.command("list", context_settings={"ignore_unknown_options": True})
+@cli.command(
+    "list",
+    help="List configured aliases and rules.",
+    context_settings={"ignore_unknown_options": True},
+)
 @click.option(
     "--config",
     "config_path",
@@ -165,13 +223,17 @@ def list_cmd(ctx, config_path, input):
     _list_config(config)
 
 
-@cli.command("status", context_settings={"ignore_unknown_options": True})
+@cli.command(
+    "status",
+    help="Show in-flight keep-alive status.",
+    context_settings={"ignore_unknown_options": True},
+)
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def status_cmd(args):
     _status()
 
 
-@cli.command("clear")
+@cli.command("clear", help="Kill the in-flight keep-alive process.")
 def clear_cmd():
     _clear()
 
