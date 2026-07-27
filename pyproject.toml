@@ -57,7 +57,7 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S603", "S108", "RUF043", "PLR0913"]
+"tests/**" = ["S101", "S603", "S108", "RUF043", "PLR0913", "PLR0917"]
 "keep_alive/backends.py" = ["S603", "S607"]
 "keep_alive/run.py" = ["S603", "S607"]
 
