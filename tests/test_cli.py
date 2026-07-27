@@ -1174,3 +1174,102 @@ class TestVerboseLogging:
         self._run_main(monkeypatch, ["--dry-run", "work", "-v"])
         err = capsys.readouterr().err
         assert "evaluating alias 'work'" in err
+
+
+# ---------------------------------------------------------------------
+# install command
+# ---------------------------------------------------------------------
+
+
+class TestInstall:
+    """install creates a default config (if absent) and installs shell
+    completions. Existing config is never overwritten.
+    """
+
+    def _run_main(self, monkeypatch, argv):
+        run.cli.main(args=argv, prog_name="keep-alive", standalone_mode=False)
+
+    def test_creates_config_when_absent(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr(
+            "keep_alive.config.default_config_path", lambda: tmp_path / "config.toml"
+        )
+        self._run_main(monkeypatch, ["install", "--config-only"])
+        out = capsys.readouterr().out
+        assert "created config" in out
+        assert (tmp_path / "config.toml").exists()
+
+    def test_does_not_overwrite_existing_config(self, monkeypatch, capsys, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("# my custom config")
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: config_path)
+        self._run_main(monkeypatch, ["install", "--config-only"])
+        out = capsys.readouterr().out
+        assert "already exists" in out
+        assert config_path.read_text() == "# my custom config"
+
+    def test_config_has_default_rule(self, monkeypatch, tmp_path):
+        config_path = tmp_path / "config.toml"
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: config_path)
+        self._run_main(monkeypatch, ["install", "--config-only"])
+        content = config_path.read_text()
+        assert 'target = "30m"' in content
+        assert "[[rule]]" in content
+
+    def test_installs_zsh_completions(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: tmp_path / "c.toml")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        self._run_main(monkeypatch, ["install", "--completions-only"])
+        out = capsys.readouterr().out
+        assert "zsh completions" in out
+        assert (tmp_path / "zsh" / "completions" / "_keep-alive").exists()
+
+    def test_installs_bash_completions(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: tmp_path / "c.toml")
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("SHELL", "/bin/bash")
+        self._run_main(monkeypatch, ["install", "--completions-only"])
+        out = capsys.readouterr().out
+        assert "bash completions" in out
+        assert (tmp_path / "bash-completion" / "completions" / "keep-alive").exists()
+
+    def test_installs_fish_completions(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: tmp_path / "c.toml")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("SHELL", "/usr/bin/fish")
+        self._run_main(monkeypatch, ["install", "--completions-only"])
+        out = capsys.readouterr().out
+        assert "fish completions" in out
+        assert (tmp_path / "fish" / "completions" / "keep-alive.fish").exists()
+
+    def test_explicit_shell_overrides_detection(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: tmp_path / "c.toml")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        self._run_main(monkeypatch, ["install", "--completions-only", "--shell", "fish"])
+        out = capsys.readouterr().out
+        assert "fish completions" in out
+
+    def test_unsupported_shell_prints_error(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: tmp_path / "c.toml")
+        self._run_main(monkeypatch, ["install", "--completions-only", "--shell", "tcsh"])
+        out = capsys.readouterr().out
+        assert "unsupported shell" in out
+
+    def test_install_does_both_by_default(self, monkeypatch, capsys, tmp_path):
+        config_path = tmp_path / "config.toml"
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: config_path)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        self._run_main(monkeypatch, ["install"])
+        out = capsys.readouterr().out
+        assert "created config" in out
+        assert "zsh completions" in out
+
+    def test_completion_script_contains_env_var(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: tmp_path / "c.toml")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        self._run_main(monkeypatch, ["install", "--completions-only"])
+        content = (tmp_path / "zsh" / "completions" / "_keep-alive").read_text()
+        assert "_KEEP_ALIVE_COMPLETE" in content

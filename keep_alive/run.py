@@ -349,6 +349,32 @@ def clear_cmd():
     _clear()
 
 
+@cli.command(
+    "install",
+    help="Create a default config file and install shell completions.",
+)
+@click.option(
+    "--shell",
+    default=None,
+    help="shell to install completions for (zsh, bash, fish). Default: auto-detect from $SHELL.",
+)
+@click.option(
+    "--config-only",
+    is_flag=True,
+    help="only create config, skip completions",
+)
+@click.option(
+    "--completions-only",
+    is_flag=True,
+    help="only install completions, skip config",
+)
+def install_cmd(shell, config_only, completions_only):
+    if not completions_only:
+        _install_config()
+    if not config_only:
+        _install_completions(shell)
+
+
 def _list_config(config: Config) -> None:
     """Print configured aliases with their rules, then return."""
     for name in sorted(config.aliases):
@@ -679,6 +705,124 @@ def _clear():
         os.killpg(pid, signal.SIGTERM)
     _pidfile_path().unlink(missing_ok=True)
     print(f"cleared keep-alive (pid {pid})")
+
+
+_DEFAULT_CONFIG_TEMPLATE = """\
+# keep-alive configuration file
+# Docs: https://github.com/willist/keep-screen-alive#configuration
+
+# Global default — used when no alias matches and keep-alive is invoked bare.
+[[rule]]
+target = "30m"
+
+# Example alias:
+#   [[alias]]
+#   name = "work"
+#     [[alias.rule]]
+#     start = "09:00"
+#     end   = "17:00"
+#     days  = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+#     target = "end"
+"""
+
+
+def _install_config() -> None:
+    """Create a default config file at the standard location if absent."""
+    from keep_alive.config import default_config_path
+
+    path = default_config_path()
+    if path.exists():
+        print(f"config already exists at {path}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_DEFAULT_CONFIG_TEMPLATE)
+    print(f"created config at {path}")
+
+
+_COMPLETION_ENV_VAR = "_KEEP_ALIVE_COMPLETE"
+
+_COMPLETION_PATHS = {
+    "zsh": lambda: (
+        (Path(os.environ.get("XDG_CONFIG_HOME", "")) / "zsh" / "completions")
+        if os.environ.get("XDG_CONFIG_HOME")
+        else Path.home() / ".config" / "zsh" / "completions"
+    ),
+    "bash": lambda: (
+        (Path(os.environ.get("XDG_DATA_HOME", "")) / "bash-completion" / "completions")
+        if os.environ.get("XDG_DATA_HOME")
+        else Path.home() / ".local" / "share" / "bash-completion" / "completions"
+    ),
+    "fish": lambda: (
+        (Path(os.environ.get("XDG_CONFIG_HOME", "")) / "fish" / "completions")
+        if os.environ.get("XDG_CONFIG_HOME")
+        else Path.home() / ".config" / "fish" / "completions"
+    ),
+}
+
+_COMPLETION_FILENAMES = {
+    "zsh": "_keep-alive",
+    "bash": "keep-alive",
+    "fish": "keep-alive.fish",
+}
+
+
+def _detect_shell() -> str | None:
+    """Detect the user's shell from $SHELL."""
+    shell_path = os.environ.get("SHELL", "")
+    return Path(shell_path).name if shell_path else None
+
+
+def _generate_completion_source(shell_name: str) -> str:
+    """Generate the completion script for the given shell."""
+    from click.shell_completion import _available_shells
+
+    shell_cls = _available_shells[shell_name]
+    comp = shell_cls(
+        cli=cli,
+        ctx_args={},
+        prog_name="keep-alive",
+        complete_var=_COMPLETION_ENV_VAR,
+    )
+    return comp.source()
+
+
+def _install_completions(shell_name: str | None) -> None:
+    """Detect the shell and install the appropriate completion script."""
+    if shell_name is None:
+        shell_name = _detect_shell()
+        if shell_name is None:
+            print("could not detect shell (set $SHELL or use --shell)")
+            return
+
+    if shell_name not in _COMPLETION_PATHS:
+        print(f"unsupported shell '{shell_name}' (supported: zsh, bash, fish)")
+        return
+
+    source = _generate_completion_source(shell_name)
+    target_dir = _COMPLETION_PATHS[shell_name]()
+    target = target_dir / _COMPLETION_FILENAMES[shell_name]
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target.write_text(source)
+    print(f"installed {shell_name} completions at {target}")
+
+    hint = _completion_hint(shell_name)
+    if hint:
+        print(hint)
+
+
+def _completion_hint(shell_name: str) -> str:
+    """Return a manual step hint for the shell, or empty string."""
+    if shell_name == "zsh":
+        oh_my_zsh = Path.home() / ".oh-my-zsh"
+        if oh_my_zsh.exists():
+            return "restart your shell or run: exec zsh"
+        return (
+            "ensure the completions directory is in your fpath:\n"
+            "  fpath+=(~/.config/zsh/completions)"
+        )
+    if shell_name == "bash":
+        return "completions will load on next login (requires bash-completion)"
+    return "restart your shell or start a new fish session"
 
 
 def main():
