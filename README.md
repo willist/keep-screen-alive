@@ -116,12 +116,8 @@ Durations and time-of-day formats are parsed by [dateparser](https://pypi.org/pr
 
 Optional. Omit all fields for an unconditional rule (always matches).
 
-- `start`, `end` - time-of-day window as `HH:MM`. Both must be set to form a range. Start inclusive, end exclusive.
+- `start`, `end` - time-of-day window as `HH:MM`. Both must be set to form a range. Start inclusive, end exclusive. Overnight windows (`start > end`) wrap past midnight: `22:00`-`02:00` matches from 10pm to 2am.
 - `days` - list of weekday abbreviations: `Mon`, `Tue`, `Wed`, `Thu`, `Fri`, `Sat`, `Sun`. Omit for daily.
-
-### Limitations
-
-- Overnight windows (e.g. `start = "22:00"`, `end = "02:00"`) aren't supported.
 
 ### Migration from `action = "..."`
 

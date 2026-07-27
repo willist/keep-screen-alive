@@ -53,6 +53,34 @@ class TestConditionMatches:
         assert not cond.matches(_dt(2024, 1, 15, 8, 0))
 
 
+class TestOvernightWindow:
+    """Conditions with start > end wrap past midnight."""
+
+    def test_matches_before_midnight(self):
+        cond = Condition(start=time(22, 0), end=time(2, 0))
+        assert cond.matches(_dt(2024, 1, 15, 23, 0))
+
+    def test_matches_after_midnight(self):
+        cond = Condition(start=time(22, 0), end=time(2, 0))
+        assert cond.matches(_dt(2024, 1, 16, 1, 0))
+
+    def test_does_not_match_before_window(self):
+        cond = Condition(start=time(22, 0), end=time(2, 0))
+        assert not cond.matches(_dt(2024, 1, 15, 21, 0))
+
+    def test_does_not_match_after_window(self):
+        cond = Condition(start=time(22, 0), end=time(2, 0))
+        assert not cond.matches(_dt(2024, 1, 16, 3, 0))
+
+    def test_start_inclusive(self):
+        cond = Condition(start=time(22, 0), end=time(2, 0))
+        assert cond.matches(_dt(2024, 1, 15, 22, 0))
+
+    def test_end_exclusive(self):
+        cond = Condition(start=time(22, 0), end=time(2, 0))
+        assert not cond.matches(_dt(2024, 1, 16, 2, 0))
+
+
 class TestEvaluate:
     def test_empty_rules_returns_none(self):
         assert evaluate([], _dt(2024, 1, 15, 12, 0)) is None

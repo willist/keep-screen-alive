@@ -6,9 +6,6 @@ current time to produce a target datetime. Target expressions are dateparser
 strings ("2h", "4pm", "16:00") or the literal token "end" which resolves to
 condition.end. This module owns the rule schema - config loading, validation,
 and target resolution live elsewhere.
-
-Known limitation: overnight windows (start > end) are not supported. A window
-of 22:00-02:00 will never match.
 """
 
 from __future__ import annotations
@@ -25,8 +22,9 @@ class Condition:
     """Optional time-of-day window and optional day-of-week filter.
 
     All fields are optional; an empty condition always matches. If `start` and
-    `end` are both set, the current local time must fall in [start, end). If
-    `days` is set, the current weekday must be in the set.
+    `end` are both set, the current local time must fall in [start, end).
+    Overnight windows (start > end) wrap past midnight: 22:00-02:00 matches
+    23:00 and 01:00. If `days` is set, the current weekday must be in the set.
     """
 
     start: time | None = None
@@ -40,7 +38,11 @@ class Condition:
                 return False
         if self.start is not None and self.end is not None:
             current = now.time()
-            if not (self.start <= current < self.end):
+            if self.start <= self.end:
+                in_window = self.start <= current < self.end
+            else:
+                in_window = current >= self.start or current < self.end
+            if not in_window:
                 return False
         return True
 

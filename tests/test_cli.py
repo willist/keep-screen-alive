@@ -146,6 +146,40 @@ class TestResolveTarget:
         target = run._resolve_target("", config, PINNED_NOW)
         assert target == PINNED_NOW + timedelta(minutes=30)
 
+    def test_overnight_window_resolves_end_to_tomorrow(self):
+        # At 23:00 with window 22:00-02:00, target="end" resolves to
+        # tomorrow 02:00, not today 02:00 (which is past).
+        now = datetime(2024, 1, 15, 23, 0, tzinfo=UTC)
+        config = Config(
+            aliases={
+                "night": [
+                    Rule(
+                        condition=Condition(start=time(22, 0), end=time(2, 0)),
+                        target="end",
+                    )
+                ]
+            },
+        )
+        target = run._resolve_target("night", config, now)
+        assert target == datetime(2024, 1, 16, 2, 0, tzinfo=UTC)
+
+    def test_overnight_window_after_midnight_resolves_end_to_today(self):
+        # At 01:00 with window 22:00-02:00, target="end" resolves to
+        # today 02:00 (still upcoming, no day bump needed).
+        now = datetime(2024, 1, 16, 1, 0, tzinfo=UTC)
+        config = Config(
+            aliases={
+                "night": [
+                    Rule(
+                        condition=Condition(start=time(22, 0), end=time(2, 0)),
+                        target="end",
+                    )
+                ]
+            },
+        )
+        target = run._resolve_target("night", config, now)
+        assert target == datetime(2024, 1, 16, 2, 0, tzinfo=UTC)
+
 
 # ---------------------------------------------------------------------
 # _correct_future_preference_regression: unit tests that directly
