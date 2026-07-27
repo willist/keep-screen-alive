@@ -5,7 +5,7 @@ import re
 import signal
 import sys
 import warnings
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import dateparser
@@ -212,13 +212,18 @@ def _resolve_target(input_value: str, config: Config, now) -> object:
 def _resolve_rule_target(rule, now):
     """Resolve a matched rule's target expression to a datetime.
 
-    `target = "end"` binds to `condition.end` on today's date. Anything else
-    flows through the same dateparser path as bare CLI input, including the
-    bare-time-of-day regression correction from #31.
+    `target = "end"` binds to `condition.end`. For overnight windows the
+    end time may fall on tomorrow (e.g., 22:00-02:00 at 23:00 resolves to
+    tomorrow 02:00). Anything else flows through the same dateparser path
+    as bare CLI input, including the bare-time-of-day regression
+    correction from #31.
     """
     if rule.target == "end":
         # Config validation guarantees condition.start + condition.end exist.
-        return combine(now, now.date(), rule.condition.end)
+        candidate = combine(now, now.date(), rule.condition.end)
+        if candidate <= now:
+            candidate = combine(now, now.date() + timedelta(days=1), rule.condition.end)
+        return candidate
     return _parse_target_with_dateparser(rule.target, now)
 
 
