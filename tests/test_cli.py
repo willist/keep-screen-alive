@@ -184,7 +184,7 @@ class TestResolveTarget:
 # ---------------------------------------------------------------------
 # _correct_future_preference_regression: unit tests that directly
 # simulate the dateparser 1.4.x bug. The integration tests above pin
-# end-to-end behavior, but on dateparser 1.1.8 (locked in poetry.lock)
+# end-to-end behavior, but on dateparser 1.1.8 (locked in uv.lock)
 # the bug does not manifest, so the helper's branching logic would go
 # unexercised without these.
 # ---------------------------------------------------------------------

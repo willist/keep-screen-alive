@@ -35,19 +35,19 @@ repos:
     hooks:
       - id: pip-audit
         name: pip-audit
-        entry: poetry run pip-audit
+        entry: uv run pip-audit
         language: system
         pass_filenames: false
       - id: mypy
         name: mypy
-        entry: poetry run mypy keep_alive
+        entry: uv run mypy keep_alive
         language: system
         types: [python]
         pass_filenames: false
         stages: [pre-push]
       - id: pytest
         name: pytest
-        entry: poetry run pytest
+        entry: uv run pytest
         language: system
         types: [python]
         pass_filenames: false
