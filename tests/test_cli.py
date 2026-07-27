@@ -1156,3 +1156,21 @@ class TestVerboseLogging:
         out = capsys.readouterr().out
         assert "evaluating alias" not in out
         assert "dateparser parse" not in out
+
+    def test_v_after_dry_run_option(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        """-v works after a subcommand option: --dry-run -v personal"""
+        mock_config_loader["config"] = Config(aliases={"work": [_target_rule("2h")]})
+        self._run_main(monkeypatch, ["--dry-run", "-v", "work"])
+        err = capsys.readouterr().err
+        assert "evaluating alias 'work'" in err
+
+    def test_v_after_positional(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        """-v works at the end: --dry-run personal -v (run-level -v)"""
+        mock_config_loader["config"] = Config(aliases={"work": [_target_rule("2h")]})
+        self._run_main(monkeypatch, ["--dry-run", "work", "-v"])
+        err = capsys.readouterr().err
+        assert "evaluating alias 'work'" in err

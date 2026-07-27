@@ -83,43 +83,6 @@ class ColoredCommand(click.Command):
             formatter.write("\n")
 
 
-def _default_insert_pos(
-    prefix_args: list[str],
-    group_opts: set[str],
-    group_value_opts: set[str],
-    group_short_chars: set[str],
-) -> int:
-    """Return the index at which the default command name should be inserted.
-
-    Scans the leading option arguments before the first positional. If all
-    are group options, returns the index past them. If any non-group option
-    appears, returns 0 so the default command name precedes everything and
-    the subcommand owns its options.
-
-    ``group_short_chars`` holds single characters from short flag/count
-    options (e.g. ``v`` from ``-v``) so stacked forms like ``-vv`` are
-    recognized as group options.
-    """
-    j = 0
-    while j < len(prefix_args):
-        arg = prefix_args[j]
-        if not arg.startswith("-"):
-            j += 1
-            continue
-        if arg in group_value_opts and j + 1 < len(prefix_args):
-            j += 2
-        elif arg in group_opts or (
-            len(arg) > 2
-            and arg.startswith("-")
-            and not arg.startswith("--")
-            and all(c in group_short_chars for c in arg[1:])
-        ):
-            j += 1
-        else:
-            return 0
-    return j
-
-
 def _collect_group_opts(group, ctx):
     """Return (all_opts, value_opts, short_flag_chars) for the group's own parameters.
 
@@ -143,18 +106,41 @@ def _collect_group_opts(group, ctx):
 
 
 def _inject_default(args, pos, name, group_opt_info):
-    """Insert the default command name at the correct position in *args*.
+    """Inject the default command name into *args*, reordering if needed.
 
-    ``pos`` is the index where the positional argument (or ``--``) sits.
-    The actual insertion point may differ: group options before ``pos``
-    stay in front of the injected name, but subcommand options push it
-    to index 0.
+    Partitions the option arguments before index ``pos`` into group-level
+    options (e.g. ``-v``, ``--config PATH``) and subcommand options (e.g.
+    ``--dry-run``), then rebuilds the list as:
 
-    ``group_opt_info`` is the tuple returned by ``_collect_group_opts``.
+        [group opts...] [name] [subcmd opts...] [positional args...]
+
+    Known group options are always pulled to the front even when they
+    appear after subcommand options, so ``keep-alive --dry-run -v personal``
+    works as well as ``keep-alive -v --dry-run personal``.
     """
     opts, value_opts, short_chars = group_opt_info
-    insert_at = _default_insert_pos(args[:pos], opts, value_opts, short_chars)
-    args.insert(insert_at, name)
+    prefix = args[:pos]
+
+    group_prefix: list[str] = []
+    subcmd_prefix: list[str] = []
+    j = 0
+    while j < len(prefix):
+        arg = prefix[j]
+        is_group = arg in opts or (
+            len(arg) > 2
+            and arg.startswith("-")
+            and not arg.startswith("--")
+            and all(c in short_chars for c in arg[1:])
+        )
+        bucket = group_prefix if is_group else subcmd_prefix
+        bucket.append(arg)
+        if arg in value_opts and j + 1 < len(prefix):
+            bucket.append(prefix[j + 1])
+            j += 2
+        else:
+            j += 1
+
+    args[:] = [*group_prefix, name, *subcmd_prefix, *args[pos:]]
 
 
 class DefaultGroup(click.Group):
@@ -243,6 +229,7 @@ def cli(ctx, config_path, verbosity):
     _configure_logging(verbosity)
     ctx.ensure_object(dict)
     ctx.obj["config"] = config_path
+    ctx.obj["verbosity"] = verbosity
 
 
 def _configure_logging(verbosity: int) -> None:
@@ -288,9 +275,21 @@ def _configure_logging(verbosity: int) -> None:
     hidden=True,
     help="list configured aliases and exit (deprecated, use 'keep-alive list')",
 )
+@click.option(
+    "-v",
+    "--verbose",
+    "verbosity",
+    count=True,
+    help="increase output verbosity (repeat for more: -v, -vv).",
+)
 @click.argument("input", nargs=-1, shell_complete=_complete_aliases)
 @click.pass_context
-def run_cmd(ctx, config_path, dry_run, list_flag, input):
+def run_cmd(ctx, config_path, dry_run, list_flag, verbosity, input):
+    # Merge group-level verbosity (already configured by cli callback) with
+    # any -v passed after the run command's own options/positionals.
+    if verbosity:
+        group_v = ctx.obj.get("verbosity", 0)
+        _configure_logging(max(verbosity, group_v))
     config = _load_config_or_exit(config_path if config_path is not None else ctx.obj.get("config"))
     if list_flag:
         click.echo(
