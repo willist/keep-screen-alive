@@ -132,16 +132,16 @@ Versions before 0.4 used an `action` field with kinds like `relative_duration` a
 
 ## Development
 
-Install [Poetry](https://python-poetry.org/) and [pre-commit](https://pre-commit.com/), then:
+Install [uv](https://docs.astral.sh/uv/) and [pre-commit](https://pre-commit.com/), then:
 
 ```bash
-poetry install
+uv sync
 pre-commit install
 pre-commit install --hook-type commit-msg
 pre-commit install --hook-type pre-push
 ```
 
-Run tests with `poetry run pytest`. Pre-commit hooks run ruff (lint and format), pip-audit, and hygiene checks on commit; the commit-msg hook verifies conventional commit format; mypy and pytest run as pre-push hooks. CI runs the same checks on pull requests and on push to `main`.
+Run tests with `uv run pytest`. Pre-commit hooks run ruff (lint and format), pip-audit, and hygiene checks on commit; the commit-msg hook verifies conventional commit format; mypy and pytest run as pre-push hooks. CI runs the same checks on pull requests and on push to `main`.
 
 ### Commit format
 

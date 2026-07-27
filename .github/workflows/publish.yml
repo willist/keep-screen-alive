@@ -17,11 +17,8 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Install Poetry
-        run: pip install poetry
-
-      - name: Install dependencies
-        run: poetry install --no-interaction
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
 
       - name: Extract version from tag
         id: version
@@ -34,7 +31,7 @@ jobs:
       - name: Bump version
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: poetry version "$VERSION"
+        run: uv version "$VERSION"
 
       - name: Commit version bump
         env:
@@ -43,7 +40,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml
+          git add pyproject.toml uv.lock
           git commit -m "chore: bump version to $VERSION [skip ci]"
           git push origin main
 
@@ -55,7 +52,7 @@ jobs:
           git push -f origin "$TAG_NAME"
 
       - name: Build
-        run: poetry build
+        run: uv build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
