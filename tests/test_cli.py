@@ -577,6 +577,129 @@ class TestStatus:
 
 
 # ---------------------------------------------------------------------
+# main: clear subcommand
+# ---------------------------------------------------------------------
+
+
+class TestClear:
+    """clear subcommand kills the in-flight keep-alive process group and
+    removes the state file. Stale or reused PIDs are detected and left
+    alone.
+    """
+
+    def _run_main(self, monkeypatch, argv):
+        monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
+        run.main()
+
+    def _redirect_state_file(self, monkeypatch, tmp_path):
+        path = tmp_path / "state"
+        monkeypatch.setattr("keep_alive.backends._pidfile_path", lambda: path)
+        monkeypatch.setattr("keep_alive.run._pidfile_path", lambda: path)
+        return path
+
+    def _write_state(self, path, state):
+        import json
+
+        path.write_text(json.dumps(state))
+
+    def test_no_state_file_prints_not_running(self, monkeypatch, capsys, tmp_path):
+        self._redirect_state_file(monkeypatch, tmp_path)
+        self._run_main(monkeypatch, ["clear"])
+        assert "no keep-alive running" in capsys.readouterr().out
+
+    def test_live_process_killed_and_confirmed(
+        self, monkeypatch, capsys, tmp_path, mock_config_loader
+    ):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        self._write_state(
+            path,
+            {
+                "input": "2h",
+                "start": "2024-01-15T12:00:00+00:00",
+                "end": "2024-01-15T14:00:00+00:00",
+                "pid": 12345,
+                "backend": "CaffeinateBackend",
+            },
+        )
+        monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: True)
+        killed = {"pgid": None}
+        monkeypatch.setattr("os.killpg", lambda pgid, sig: killed.update(pgid=pgid))
+        self._run_main(monkeypatch, ["clear"])
+        out = capsys.readouterr().out
+        assert "cleared keep-alive (pid 12345)" in out
+        assert killed["pgid"] == 12345
+        assert not path.exists()
+
+    def test_dead_pid_prints_not_running_and_cleans_up(
+        self, monkeypatch, capsys, tmp_path, mock_config_loader
+    ):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        self._write_state(
+            path,
+            {
+                "input": "2h",
+                "start": "2024-01-15T12:00:00+00:00",
+                "end": "2024-01-15T14:00:00+00:00",
+                "pid": 99999,
+                "backend": "CaffeinateBackend",
+            },
+        )
+        monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: False)
+
+        def fail_if_killed(pgid, sig):
+            raise AssertionError("should not killpg")
+
+        monkeypatch.setattr("os.killpg", fail_if_killed)
+        self._run_main(monkeypatch, ["clear"])
+        assert "no keep-alive running" in capsys.readouterr().out
+        assert not path.exists()
+
+    def test_reused_pid_not_killed(self, monkeypatch, capsys, tmp_path, mock_config_loader):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        self._write_state(
+            path,
+            {
+                "input": "2h",
+                "start": "2024-01-15T12:00:00+00:00",
+                "end": "2024-01-15T14:00:00+00:00",
+                "pid": 12345,
+                "backend": "CaffeinateBackend",
+            },
+        )
+        monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: False)
+
+        def fail_if_killed(pgid, sig):
+            raise AssertionError("should not killpg a reused PID")
+
+        monkeypatch.setattr("os.killpg", fail_if_killed)
+        self._run_main(monkeypatch, ["clear"])
+        assert "no keep-alive running" in capsys.readouterr().out
+        assert not path.exists()
+
+    def test_legacy_pidfile_live_process_cleared(
+        self, monkeypatch, capsys, tmp_path, mock_config_loader
+    ):
+        path = self._redirect_state_file(monkeypatch, tmp_path)
+        path.write_text("12345")
+        monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: True)
+        killed = {"pgid": None}
+        monkeypatch.setattr("os.killpg", lambda pgid, sig: killed.update(pgid=pgid))
+        self._run_main(monkeypatch, ["clear"])
+        out = capsys.readouterr().out
+        assert "cleared keep-alive (pid 12345)" in out
+        assert killed["pgid"] == 12345
+        assert not path.exists()
+
+    def test_clear_does_not_engage_backend(
+        self, monkeypatch, capsys, tmp_path, mock_backend, mock_config_loader
+    ):
+        self._redirect_state_file(monkeypatch, tmp_path)
+        self._run_main(monkeypatch, ["clear"])
+        assert not mock_backend.inhibit.called
+        assert not mock_backend.cleanup.called
+
+
+# ---------------------------------------------------------------------
 # main: --config flag plumbing
 # ---------------------------------------------------------------------
 

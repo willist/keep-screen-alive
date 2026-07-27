@@ -37,6 +37,9 @@ Keeping alive until 12:00PM CDT, Jun 01, 2023
 
 $ keep-alive 7am
 Keeping alive until 07:00AM CDT, Jun 02, 2023
+
+$ keep-alive clear
+cleared keep-alive (pid 12345)
 ```
 
 ## Configuration
