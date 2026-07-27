@@ -14,6 +14,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          token: ${{ secrets.PUBLISH_TOKEN }}
           ref: main
           fetch-depth: 0
 
