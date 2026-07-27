@@ -1056,3 +1056,103 @@ class TestListFormatting:
     )
     def test_format_duration(self, td, expected):
         assert run._format_duration(td) == expected
+
+
+# ---------------------------------------------------------------------
+# --verbose / -v
+# ---------------------------------------------------------------------
+
+
+class TestVerboseLogging:
+    """-v emits INFO (rule eval, target resolution, backend selection) to
+    stderr; -vv adds DEBUG (dateparser details, state file I/O). Default
+    invocation is silent on stderr.
+    """
+
+    def _run_main(self, monkeypatch, argv):
+        run.cli.main(args=argv, prog_name="keep-alive", standalone_mode=False)
+
+    def test_default_is_silent_on_stderr(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config(aliases={"work": [_target_rule("2h")]})
+        self._run_main(monkeypatch, ["work"])
+        err = capsys.readouterr().err
+        assert err == ""
+
+    def test_v_prints_rule_evaluation_to_stderr(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config(aliases={"work": [_target_rule("2h")]})
+        self._run_main(monkeypatch, ["-v", "work"])
+        captured = capsys.readouterr()
+        # Rule evaluation goes to stderr, not stdout
+        assert "evaluating alias 'work'" in captured.err
+        assert "matched rule" in captured.err
+
+    def test_v_prints_selected_backend(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        mock_backend.__name__ = "FakeBackend"
+        self._run_main(monkeypatch, ["-v", "1h"])
+        err = capsys.readouterr().err
+        assert "selected backend: FakeBackend" in err
+
+    def test_v_prints_global_fallback(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config(
+            aliases={
+                "work": [
+                    Rule(
+                        condition=Condition(start=time(9, 0), end=time(10, 0)),
+                        target="end",
+                    )
+                ]
+            },
+            global_rules=[_target_rule("30m")],
+        )
+        self._run_main(monkeypatch, ["-v", "work"])
+        err = capsys.readouterr().err
+        assert "no alias rule matched" in err
+        assert "falling back to global rules" in err
+
+    def test_vv_shows_dateparser_details(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        self._run_main(monkeypatch, ["-vv", "2h"])
+        err = capsys.readouterr().err
+        assert "dateparser parse" in err
+
+    def test_vv_shows_state_file_write(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader, tmp_path
+    ):
+        from keep_alive.backends import _write_state
+
+        run._configure_logging(2)
+        monkeypatch.setattr("keep_alive.backends._pidfile_path", lambda: tmp_path / "state")
+        # _write_state is called by the real backend; call it directly since
+        # the backend is mocked in CLI tests.
+        _write_state({"pid": 123, "backend": "MockBackend"})
+        err = capsys.readouterr().err
+        assert "wrote state file" in err
+
+    def test_vv_shows_state_file_read(self, monkeypatch, capsys, mock_config_loader, tmp_path):
+        import json
+
+        path = tmp_path / "state"
+        path.write_text(json.dumps({"pid": 999, "backend": "MockBackend"}))
+        monkeypatch.setattr("keep_alive.backends._pidfile_path", lambda: path)
+        self._run_main(monkeypatch, ["-vv", "status"])
+        err = capsys.readouterr().err
+        assert "read state file" in err
+
+    def test_no_verbose_keeps_stdout_clean(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        """Logging never leaks into stdout regardless of verbosity."""
+        mock_config_loader["config"] = Config(aliases={"work": [_target_rule("2h")]})
+        self._run_main(monkeypatch, ["-vv", "work"])
+        out = capsys.readouterr().out
+        assert "evaluating alias" not in out
+        assert "dateparser parse" not in out

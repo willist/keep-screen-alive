@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import shutil
 import signal
@@ -7,6 +8,8 @@ import sys
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
+
+logger = logging.getLogger("keep_alive")
 
 
 def _pidfile_path() -> Path:
@@ -31,6 +34,12 @@ def _write_state(state: dict) -> None:
     path = _pidfile_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2))
+    logger.debug(
+        "wrote state file %s: pid=%s backend=%s",
+        path,
+        state.get("pid"),
+        state.get("backend"),
+    )
 
 
 def _read_state() -> dict | None:
@@ -42,20 +51,31 @@ def _read_state() -> dict | None:
     """
     path = _pidfile_path()
     if not path.exists():
+        logger.debug("state file %s does not exist", path)
         return None
     try:
         content = path.read_text().strip()
-    except OSError:
+    except OSError as e:
+        logger.debug("could not read state file %s: %s", path, e)
         return None
     try:
         state = json.loads(content)
         if isinstance(state, dict):
+            logger.debug(
+                "read state file %s: pid=%s backend=%s",
+                path,
+                state.get("pid"),
+                state.get("backend"),
+            )
             return state
     except json.JSONDecodeError:
         pass
     try:
-        return {"pid": int(content), "_legacy": True}
+        legacy = {"pid": int(content), "_legacy": True}
+        logger.debug("read legacy plain-PID state file %s: pid=%s", path, legacy["pid"])
+        return legacy
     except ValueError:
+        logger.debug("state file %s is not valid JSON or a plain PID", path)
         return None
 
 

@@ -1,4 +1,5 @@
 import contextlib
+import logging
 import os
 import re
 import signal
@@ -15,6 +16,8 @@ from click.shell_completion import CompletionItem
 from keep_alive.backends import _pidfile_path, _read_state, get_backend
 from keep_alive.config import Config, ConfigError, load_config
 from keep_alive.rules import combine, evaluate
+
+logger = logging.getLogger("keep_alive")
 
 _PARSER_SETTINGS = {
     "PREFER_DATES_FROM": "future",
@@ -80,6 +83,80 @@ class ColoredCommand(click.Command):
             formatter.write("\n")
 
 
+def _default_insert_pos(
+    prefix_args: list[str],
+    group_opts: set[str],
+    group_value_opts: set[str],
+    group_short_chars: set[str],
+) -> int:
+    """Return the index at which the default command name should be inserted.
+
+    Scans the leading option arguments before the first positional. If all
+    are group options, returns the index past them. If any non-group option
+    appears, returns 0 so the default command name precedes everything and
+    the subcommand owns its options.
+
+    ``group_short_chars`` holds single characters from short flag/count
+    options (e.g. ``v`` from ``-v``) so stacked forms like ``-vv`` are
+    recognized as group options.
+    """
+    j = 0
+    while j < len(prefix_args):
+        arg = prefix_args[j]
+        if not arg.startswith("-"):
+            j += 1
+            continue
+        if arg in group_value_opts and j + 1 < len(prefix_args):
+            j += 2
+        elif arg in group_opts or (
+            len(arg) > 2
+            and arg.startswith("-")
+            and not arg.startswith("--")
+            and all(c in group_short_chars for c in arg[1:])
+        ):
+            j += 1
+        else:
+            return 0
+    return j
+
+
+def _collect_group_opts(group, ctx):
+    """Return (all_opts, value_opts, short_flag_chars) for the group's own parameters.
+
+    Used by ``DefaultGroup.parse_args`` to distinguish group-level options
+    (e.g. ``-v``, ``--config``) from subcommand options (e.g. ``--dry-run``)
+    when injecting the default command name.
+    """
+    all_opts: set[str] = set()
+    value_opts: set[str] = set()
+    short_chars: set[str] = set()
+    for param in group.get_params(ctx):
+        all_opts.update(param.opts)
+        all_opts.update(param.secondary_opts)
+        if not param.is_flag and not param.count:
+            value_opts.update(param.opts)
+        if param.is_flag or param.count:
+            for opt in param.opts:
+                if len(opt) == 2 and opt.startswith("-") and not opt.startswith("--"):
+                    short_chars.add(opt[1])
+    return all_opts, value_opts, short_chars
+
+
+def _inject_default(args, pos, name, group_opt_info):
+    """Insert the default command name at the correct position in *args*.
+
+    ``pos`` is the index where the positional argument (or ``--``) sits.
+    The actual insertion point may differ: group options before ``pos``
+    stay in front of the injected name, but subcommand options push it
+    to index 0.
+
+    ``group_opt_info`` is the tuple returned by ``_collect_group_opts``.
+    """
+    opts, value_opts, short_chars = group_opt_info
+    insert_at = _default_insert_pos(args[:pos], opts, value_opts, short_chars)
+    args.insert(insert_at, name)
+
+
 class DefaultGroup(click.Group):
     """A click Group that falls back to a default subcommand when the
     first positional argument isn't a known subcommand name.
@@ -105,20 +182,20 @@ class DefaultGroup(click.Group):
         if ctx.resilient_parsing:
             return super().parse_args(ctx, args)
         args = list(args)
+        opt_info = _collect_group_opts(self, ctx)
+
         i = 0
         while i < len(args):
             arg = args[i]
             if arg == "--":
-                args.insert(0, self.default_cmd_name)
+                _inject_default(args, i, self.default_cmd_name, opt_info)
                 break
             if arg.startswith("-"):
-                if arg == "--config" and i + 1 < len(args):
-                    i += 2
-                else:
-                    i += 1
+                _, value_opts, _ = opt_info
+                i += 2 if arg in value_opts and i + 1 < len(args) else 1
                 continue
             if arg not in self.commands:
-                args.insert(0, self.default_cmd_name)
+                _inject_default(args, i, self.default_cmd_name, opt_info)
             break
         else:
             if not args or not any(a in ("--version", "--help", "-h") for a in args):
@@ -149,15 +226,43 @@ class DefaultGroup(click.Group):
     default=None,
     help="path to config file (default: $XDG_CONFIG_HOME/keep-alive/config.toml)",
 )
+@click.option(
+    "-v",
+    "--verbose",
+    "verbosity",
+    count=True,
+    help="increase output verbosity (repeat for more: -v, -vv).",
+)
 @click.version_option(
     version=_pkg_version("keep-screen-alive"),
     prog_name="keep-alive",
 )
 @click.pass_context
-def cli(ctx, config_path):
+def cli(ctx, config_path, verbosity):
     """Keep your screen awake until a target time or alias."""
+    _configure_logging(verbosity)
     ctx.ensure_object(dict)
     ctx.obj["config"] = config_path
+
+
+def _configure_logging(verbosity: int) -> None:
+    """Map -v count to logging level and emit to stderr.
+
+    Default (0): WARNING and above (effectively silent in normal use).
+    -v (1): INFO — rule evaluation, target resolution, backend selection.
+    -vv (2+): DEBUG — dateparser details and state file reads/writes.
+    """
+    level = logging.WARNING
+    if verbosity == 1:
+        level = logging.INFO
+    elif verbosity >= 2:
+        level = logging.DEBUG
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    # Replace handlers so re-invocations (tests) don't accumulate duplicates.
+    logger.handlers[:] = [handler]
+    logger.setLevel(level)
+    logger.propagate = False
 
 
 @cli.command(
@@ -336,8 +441,10 @@ def _resolve_target(input_value: str, config: Config, now) -> object:
     """
     if not input_value or input_value in config.aliases:
         alias_rules = config.aliases.get(input_value, [])
+        logger.info("evaluating alias '%s': %d rule(s)", input_value or "(bare)", len(alias_rules))
         rule = evaluate(alias_rules, now)
         if rule is None:
+            logger.info("no alias rule matched; falling back to global rules")
             rule = evaluate(config.global_rules, now)
         if rule is None:
             if input_value:
@@ -345,8 +452,14 @@ def _resolve_target(input_value: str, config: Config, now) -> object:
             else:
                 print("Missing a target")
             sys.exit(1)
+        logger.info(
+            "matched rule: when=%s target=%s",
+            _format_condition(rule.condition),
+            rule.target,
+        )
         return _resolve_rule_target(rule, now)
 
+    logger.info("input '%s' is not an alias; parsing with dateparser", input_value)
     return _parse_target_with_dateparser(input_value, now)
 
 
@@ -364,6 +477,7 @@ def _resolve_rule_target(rule, now):
         candidate = combine(now, now.date(), rule.condition.end)
         if candidate <= now:
             candidate = combine(now, now.date() + timedelta(days=1), rule.condition.end)
+        logger.debug("target 'end' resolved to %s", candidate.isoformat())
         return candidate
     return _parse_target_with_dateparser(rule.target, now)
 
@@ -373,6 +487,12 @@ def _parse_target_with_dateparser(input_value: str, now):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         later = dateparser.parse(input_value, settings=settings)
+    logger.debug(
+        "dateparser parse %r (settings=%s) -> %s",
+        input_value,
+        _PARSER_SETTINGS,
+        later.isoformat() if later else None,
+    )
     if later is None:
         print("Missing a target")
         sys.exit(1)
@@ -395,9 +515,15 @@ def _correct_future_preference_regression(later, input_value, now):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         today_candidate = dateparser.parse(input_value, settings=settings)
+    logger.debug(
+        "regression check: flagged=%s, today_candidate=%s",
+        later.isoformat(),
+        today_candidate.isoformat() if today_candidate else None,
+    )
     if today_candidate is None:
         return later
     if today_candidate.date() != later.date() and now < today_candidate < later:
+        logger.debug("pulled bare time-of-day back to today: %s", today_candidate.isoformat())
         return today_candidate
     return later
 
@@ -417,6 +543,7 @@ def _dry_run(target, now):
     """
     duration = target - now
     backend = get_backend()
+    logger.info("selected backend: %s", backend.__name__)
     print(f"target: {target:%I:%M%p %Z, %b %d, %Y}")
     print(f"duration: {_format_duration(duration)}")
     print(f"backend: {backend.__name__}")
@@ -425,6 +552,7 @@ def _dry_run(target, now):
 def _run_backend(target, now, input_value):
     diff = (target - now).seconds
     backend = get_backend()
+    logger.info("selected backend: %s", backend.__name__)
     backend.cleanup()
     metadata = {
         "input": input_value,
