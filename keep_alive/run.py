@@ -1,5 +1,8 @@
 import argparse
+import contextlib
+import os
 import re
+import signal
 import sys
 import warnings
 from datetime import datetime
@@ -7,7 +10,7 @@ from pathlib import Path
 
 import dateparser
 
-from keep_alive.backends import _read_state, get_backend
+from keep_alive.backends import _pidfile_path, _read_state, get_backend
 from keep_alive.config import Config, ConfigError, load_config
 from keep_alive.rules import combine, evaluate
 
@@ -17,7 +20,7 @@ _PARSER_SETTINGS = {
 }
 
 
-_SUBCOMMANDS = frozenset({"list", "status"})
+_SUBCOMMANDS = frozenset({"list", "status", "clear"})
 
 
 def main():
@@ -28,6 +31,9 @@ def main():
         return
     if args.command == "status":
         _status()
+        return
+    if args.command == "clear":
+        _clear()
         return
     if args.list:
         print(
@@ -370,6 +376,29 @@ def _status():
     print(f"remaining: {_format_duration(remaining)}")
     print(f"backend: {backend_name}")
     print(f"pid: {pid}")
+
+
+def _clear():
+    """Kill the in-flight keep-alive process and remove the state file.
+
+    Uses the same liveness check as _is_our_process so a PID reused by
+    another process is never killed. Stale state files (dead PID, reused
+    PID) are cleaned up. Prints a confirmation when a process was killed.
+    """
+    state = _read_state()
+    if state is None:
+        print("no keep-alive running")
+        return
+    pid = state.get("pid")
+    backend_name = state.get("backend", "")
+    if not isinstance(pid, int) or not _is_our_process(pid, backend_name):
+        _pidfile_path().unlink(missing_ok=True)
+        print("no keep-alive running")
+        return
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(pid, signal.SIGTERM)
+    _pidfile_path().unlink(missing_ok=True)
+    print(f"cleared keep-alive (pid {pid})")
 
 
 if __name__ == "__main__":
