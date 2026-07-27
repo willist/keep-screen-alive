@@ -355,8 +355,12 @@ def clear_cmd():
 )
 @click.option(
     "--shell",
-    default=None,
-    help="shell to install completions for (zsh, bash, fish). Default: auto-detect from $SHELL.",
+    "shells",
+    multiple=True,
+    metavar="SHELL",
+    help="shell(s) to install for: zsh, bash, fish, or all. Repeat for multiple "
+    "(e.g. --shell zsh --shell bash). With no --shell: interactive prompt in a "
+    "TTY, otherwise auto-detect from $SHELL.",
 )
 @click.option(
     "--config-only",
@@ -368,11 +372,11 @@ def clear_cmd():
     is_flag=True,
     help="only install completions, skip config",
 )
-def install_cmd(shell, config_only, completions_only):
+def install_cmd(shells, config_only, completions_only):
     if not completions_only:
         _install_config()
     if not config_only:
-        _install_completions(shell)
+        _install_completions(shells)
 
 
 def _list_config(config: Config) -> None:
@@ -766,6 +770,9 @@ _COMPLETION_FILENAMES = {
 }
 
 
+_SUPPORTED_SHELLS = ("zsh", "bash", "fish")
+
+
 def _detect_shell() -> str | None:
     """Detect the user's shell from $SHELL."""
     shell_path = os.environ.get("SHELL", "")
@@ -786,18 +793,50 @@ def _generate_completion_source(shell_name: str) -> str:
     return comp.source()
 
 
-def _install_completions(shell_name: str | None) -> None:
-    """Detect the shell and install the appropriate completion script."""
-    if shell_name is None:
-        shell_name = _detect_shell()
-        if shell_name is None:
-            print("could not detect shell (set $SHELL or use --shell)")
-            return
+def _prompt_shells(detected: str | None) -> list[str]:
+    """Interactively prompt the user to pick shells for completion install."""
+    print("Select shells to install completions for:")
+    selected = []
+    for shell in _SUPPORTED_SHELLS:
+        default = shell == detected
+        if click.confirm(f"  {shell}", default=default):
+            selected.append(shell)
+    return selected
 
-    if shell_name not in _COMPLETION_PATHS:
-        print(f"unsupported shell '{shell_name}' (supported: zsh, bash, fish)")
-        return
 
+def _install_completions(shells: tuple[str, ...]) -> None:
+    """Install completion scripts for one or more shells."""
+    if not shells:
+        if sys.stdin.isatty():
+            detected = _detect_shell()
+            shells = tuple(_prompt_shells(detected))
+            if not shells:
+                print("no shells selected; skipping completions")
+                return
+        else:
+            detected = _detect_shell()
+            if detected is None:
+                print("could not detect shell (set $SHELL or use --shell)")
+                return
+            shells = (detected,)
+
+    if "all" in shells:
+        shells = _SUPPORTED_SHELLS
+
+    installed = False
+    for shell_name in shells:
+        if shell_name not in _COMPLETION_PATHS:
+            print(f"unsupported shell '{shell_name}' (supported: zsh, bash, fish)")
+            continue
+        _install_one_shell(shell_name)
+        installed = True
+
+    if not installed:
+        print("no completions installed")
+
+
+def _install_one_shell(shell_name: str) -> None:
+    """Generate and write the completion script for one shell."""
     source = _generate_completion_source(shell_name)
     target_dir = _COMPLETION_PATHS[shell_name]()
     target = target_dir / _COMPLETION_FILENAMES[shell_name]

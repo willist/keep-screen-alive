@@ -1273,3 +1273,51 @@ class TestInstall:
         self._run_main(monkeypatch, ["install", "--completions-only"])
         content = (tmp_path / "zsh" / "completions" / "_keep-alive").read_text()
         assert "_KEEP_ALIVE_COMPLETE" in content
+
+    def test_multiple_shells(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: tmp_path / "c.toml")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        self._run_main(
+            monkeypatch,
+            ["install", "--completions-only", "--shell", "zsh", "--shell", "bash"],
+        )
+        out = capsys.readouterr().out
+        assert "zsh completions" in out
+        assert "bash completions" in out
+        assert (tmp_path / "zsh" / "completions" / "_keep-alive").exists()
+        assert (tmp_path / "bash-completion" / "completions" / "keep-alive").exists()
+
+    def test_shell_all_installs_three(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: tmp_path / "c.toml")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        self._run_main(monkeypatch, ["install", "--completions-only", "--shell", "all"])
+        out = capsys.readouterr().out
+        assert "zsh completions" in out
+        assert "bash completions" in out
+        assert "fish completions" in out
+
+    def test_interactive_prompt_in_tty(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: tmp_path / "c.toml")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+
+        answers = {"zsh": True, "bash": True, "fish": False}
+        monkeypatch.setattr(
+            "click.confirm", lambda msg, **kw: answers.get(msg.strip().split()[-1], False)
+        )
+        self._run_main(monkeypatch, ["install", "--completions-only"])
+        out = capsys.readouterr().out
+        assert "zsh completions" in out
+        assert "bash completions" in out
+        assert "fish completions" not in out
+
+    def test_interactive_prompt_selects_none(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr("keep_alive.config.default_config_path", lambda: tmp_path / "c.toml")
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("click.confirm", lambda msg, **kw: False)
+        self._run_main(monkeypatch, ["install", "--completions-only"])
+        out = capsys.readouterr().out
+        assert "no shells selected" in out
