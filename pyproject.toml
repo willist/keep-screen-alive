@@ -1,6 +1,6 @@
 [project]
 name = "keep-screen-alive"
-version = "0.4.0"
+version = "0.5.0"
 description = "A cross-platform tool to keep your screen awake using a relative datetime"
 authors = [{name = "Tim Willis"}]
 license = "MIT"
