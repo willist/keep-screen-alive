@@ -240,73 +240,41 @@ class TestCorrectFuturePreferenceRegression:
 
 
 # ---------------------------------------------------------------------
-# _parse_args
+# DefaultGroup: subcommand resolution
 # ---------------------------------------------------------------------
 
 
-class TestParseArgs:
+class TestDefaultGroup:
+    """Tests for the DefaultGroup's command-resolution logic."""
+
     def test_version_flag_prints_and_exits(self, capsys):
-        with pytest.raises(SystemExit) as exc:
-            run._parse_args(["--version"])
-        assert exc.value.code == 0
-        out = capsys.readouterr().out
-        assert "keep-alive" in out
+        rv = run.cli.main(args=["--version"], prog_name="keep-alive", standalone_mode=False)
+        assert rv == 0
+        assert "keep-alive" in capsys.readouterr().out
 
-    def test_parses_positional_input(self):
-        args = run._parse_args(["2h"])
-        assert args.input == ["2h"]
-        assert args.config is None
+    def test_double_dash_routes_to_run(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config(
+            aliases={"list": [_target_rule("2h")]},
+        )
+        run.cli.main(args=["--", "list"], prog_name="keep-alive", standalone_mode=False)
+        mock_backend.inhibit.assert_called_once_with(7200, ANY)
 
-    def test_joins_multi_word_input(self):
-        args = run._parse_args(["12pm", "tomorrow"])
-        assert args.input == ["12pm", "tomorrow"]
+    def test_bare_invocation_routes_to_run(
+        self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
+    ):
+        with pytest.raises(SystemExit):
+            run.cli.main(args=[], prog_name="keep-alive", standalone_mode=False)
+        assert "Missing a target" in capsys.readouterr().out
 
-    def test_parses_config_flag(self):
-        args = run._parse_args(["--config", "/foo.toml", "work"])
-        assert args.config == "/foo.toml"
-        assert args.input == ["work"]
-
-    def test_config_flag_without_input(self):
-        args = run._parse_args(["--config", "/foo.toml"])
-        assert args.config == "/foo.toml"
-        assert args.input == []
-
-    def test_no_args_returns_empty_input(self):
-        args = run._parse_args([])
-        assert args.input == []
-
-    def test_list_subcommand_detected(self):
-        args = run._parse_args(["list"])
-        assert args.command == "list"
-
-    def test_status_subcommand_detected(self):
-        args = run._parse_args(["status"])
-        assert args.command == "status"
-
-    def test_subcommand_with_config_flag_before(self):
-        args = run._parse_args(["--config", "/foo.toml", "list"])
-        assert args.command == "list"
-        assert args.config == "/foo.toml"
-
-    def test_subcommand_with_config_flag_after(self):
-        args = run._parse_args(["list", "--config", "/foo.toml"])
-        assert args.command == "list"
-        assert args.config == "/foo.toml"
-
-    def test_non_subcommand_not_detected(self):
-        args = run._parse_args(["work"])
-        assert args.command is None
-        assert args.input == ["work"]
-
-    def test_double_dash_escapes_subcommand(self):
-        args = run._parse_args(["--", "list"])
-        assert args.command is None
-        assert args.input == ["list"]
-
-    def test_deprecated_list_flag_still_parsed(self):
-        args = run._parse_args(["--list"])
-        assert args.list is True
-        assert args.command is None
+    def test_known_subcommand_not_redirected(
+        self, monkeypatch, capsys, tmp_path, mock_config_loader
+    ):
+        path = tmp_path / "state"
+        monkeypatch.setattr("keep_alive.backends._pidfile_path", lambda: path)
+        run.cli.main(args=["status"], prog_name="keep-alive", standalone_mode=False)
+        assert "no keep-alive running" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------
@@ -316,8 +284,7 @@ class TestParseArgs:
 
 class TestMain:
     def _run_main(self, monkeypatch, argv):
-        monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
-        run.main()
+        run.cli.main(args=argv, prog_name="keep-alive", standalone_mode=False)
 
     def test_alias_runs_backend(
         self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
@@ -402,8 +369,7 @@ class TestMain:
 
 class TestDryRun:
     def _run_main(self, monkeypatch, argv):
-        monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
-        run.main()
+        run.cli.main(args=argv, prog_name="keep-alive", standalone_mode=False)
 
     def test_dry_run_prints_target_duration_and_backend(
         self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
@@ -483,8 +449,7 @@ class TestStatus:
     """
 
     def _run_main(self, monkeypatch, argv):
-        monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
-        run.main()
+        run.cli.main(args=argv, prog_name="keep-alive", standalone_mode=False)
 
     def _redirect_state_file(self, monkeypatch, tmp_path):
         """Point backends._pidfile_path at tmp_path so tests can write fixtures."""
@@ -629,8 +594,7 @@ class TestClear:
     """
 
     def _run_main(self, monkeypatch, argv):
-        monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
-        run.main()
+        run.cli.main(args=argv, prog_name="keep-alive", standalone_mode=False)
 
     def _redirect_state_file(self, monkeypatch, tmp_path):
         path = tmp_path / "state"
@@ -754,13 +718,11 @@ class TestConfigFlag:
             return Config()
 
         monkeypatch.setattr("keep_alive.run._load_config_or_exit", capturing_loader)
-        # Use an unparseable input so we exit before backend runs - but we
-        # need a valid alias path. Easier: pass an alias that doesn't exist
-        # and check we got past the loader.
-        monkeypatch.setattr("sys.argv", ["keep-alive", "--config", "/foo.toml", "2h"])
-        run.main()
-        # _load_config_or_exit receives the raw string; it converts to Path
-        # internally before calling load_config.
+        run.cli.main(
+            args=["--config", "/foo.toml", "2h"],
+            prog_name="keep-alive",
+            standalone_mode=False,
+        )
         assert captured["path"] == "/foo.toml"
 
     def test_no_config_flag_passes_none(self, monkeypatch, mock_now, mock_backend):
@@ -771,8 +733,7 @@ class TestConfigFlag:
             return Config()
 
         monkeypatch.setattr("keep_alive.run._load_config_or_exit", capturing_loader)
-        monkeypatch.setattr("sys.argv", ["keep-alive", "2h"])
-        run.main()
+        run.cli.main(args=["2h"], prog_name="keep-alive", standalone_mode=False)
         assert captured["path"] is None
 
 
@@ -783,8 +744,7 @@ class TestConfigFlag:
 
 class TestList:
     def _run_main(self, monkeypatch, argv):
-        monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
-        run.main()
+        run.cli.main(args=argv, prog_name="keep-alive", standalone_mode=False)
 
     def test_list_subcommand_with_empty_config(
         self, monkeypatch, capsys, mock_backend, mock_config_loader
@@ -847,8 +807,11 @@ class TestList:
     ):
         config_file = tmp_path / "test.toml"
         config_file.write_text('[[alias]]\nname = "fromfile"\n[[alias.rule]]\ntarget = "30m"\n')
-        monkeypatch.setattr("sys.argv", ["keep-alive", "list", "--config", str(config_file)])
-        run.main()
+        run.cli.main(
+            args=["list", "--config", str(config_file)],
+            prog_name="keep-alive",
+            standalone_mode=False,
+        )
         out = capsys.readouterr().out
         assert "fromfile" in out
         assert "for 30m" in out

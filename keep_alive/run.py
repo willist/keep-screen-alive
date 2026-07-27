@@ -1,4 +1,3 @@
-import argparse
 import contextlib
 import os
 import re
@@ -9,6 +8,7 @@ from datetime import datetime, timedelta
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
+import click
 import dateparser
 
 from keep_alive.backends import _pidfile_path, _read_state, get_backend
@@ -21,86 +21,126 @@ _PARSER_SETTINGS = {
 }
 
 
-_SUBCOMMANDS = frozenset({"list", "status", "clear"})
+class DefaultGroup(click.Group):
+    """A click Group that falls back to a default subcommand when the
+    first positional argument isn't a known subcommand name.
+
+    This preserves the existing UX where ``keep-alive 2h`` is shorthand
+    for ``keep-alive run 2h``.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.default_cmd_name = kwargs.pop("default", "")
+        super().__init__(*args, **kwargs)
+
+    def parse_args(self, ctx, args):
+        args = list(args)
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg == "--":
+                args.insert(0, self.default_cmd_name)
+                break
+            if arg.startswith("-"):
+                if arg == "--config" and i + 1 < len(args):
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if arg not in self.commands:
+                args.insert(0, self.default_cmd_name)
+            break
+        else:
+            if not args or not any(a in ("--version", "--help", "-h") for a in args):
+                args.insert(0, self.default_cmd_name)
+        return super().parse_args(ctx, args)
 
 
-def main():
-    args = _parse_args(sys.argv[1:])
-    config = _load_config_or_exit(args.config)
-    if args.command == "list":
-        _list_config(config)
-        return
-    if args.command == "status":
-        _status()
-        return
-    if args.command == "clear":
-        _clear()
-        return
-    if args.list:
-        print(
+@click.group(
+    cls=DefaultGroup,
+    default="run",
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    help="path to config file (default: $XDG_CONFIG_HOME/keep-alive/config.toml)",
+)
+@click.version_option(
+    version=_pkg_version("keep-screen-alive"),
+    prog_name="keep-alive",
+)
+@click.pass_context
+def cli(ctx, config_path):
+    ctx.ensure_object(dict)
+    ctx.obj["config"] = config_path
+
+
+@cli.command("run")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    help="path to config file (default: $XDG_CONFIG_HOME/keep-alive/config.toml)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="resolve and print target without engaging the backend",
+)
+@click.option(
+    "--list",
+    "list_flag",
+    is_flag=True,
+    hidden=True,
+    help="list configured aliases and exit (deprecated, use 'keep-alive list')",
+)
+@click.argument("input", nargs=-1)
+@click.pass_context
+def run_cmd(ctx, config_path, dry_run, list_flag, input):
+    config = _load_config_or_exit(config_path if config_path is not None else ctx.obj.get("config"))
+    if list_flag:
+        click.echo(
             "warning: --list is deprecated; use 'keep-alive list' instead "
             "(will be removed in v1.0)",
-            file=sys.stderr,
+            err=True,
         )
         _list_config(config)
         return
     now = _current_now()
-    input_value = " ".join(args.input)
+    input_value = " ".join(input)
     target = _resolve_target(input_value, config, now)
     _validate_target(target, now)
-    if args.dry_run:
+    if dry_run:
         _dry_run(target, now)
         return
     _run_backend(target, now, input_value)
 
 
-def _parse_args(argv):
-    parser = argparse.ArgumentParser(
-        prog="keep-alive",
-        description="Keep your screen awake until a target time or alias window.",
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"keep-alive {_pkg_version('keep-screen-alive')}",
-    )
-    parser.add_argument("input", nargs="*", help="alias name from config, or datetime expression")
-    parser.add_argument(
-        "--config",
-        help="path to config file (default: $XDG_CONFIG_HOME/keep-alive/config.toml)",
-    )
-    parser.add_argument(
-        "--list",
-        action="store_true",
-        help="list configured aliases and exit (deprecated, use 'keep-alive list')",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="resolve and print target without engaging the backend",
-    )
+@cli.command("list", context_settings={"ignore_unknown_options": True})
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    help="path to config file (default: $XDG_CONFIG_HOME/keep-alive/config.toml)",
+)
+@click.argument("input", nargs=-1, type=click.UNPROCESSED)
+@click.pass_context
+def list_cmd(ctx, config_path, input):
+    config = _load_config_or_exit(config_path if config_path is not None else ctx.obj.get("config"))
+    _list_config(config)
 
-    command = None
-    filtered = list(argv)
-    i = 0
-    while i < len(filtered):
-        arg = filtered[i]
-        if arg == "--":
-            break
-        if arg.startswith("-"):
-            if arg == "--config" and i + 1 < len(filtered):
-                i += 2
-            else:
-                i += 1
-            continue
-        if arg in _SUBCOMMANDS:
-            command = arg
-            del filtered[i]
-        break
 
-    args = parser.parse_args(filtered)
-    args.command = command
-    return args
+@cli.command("status", context_settings={"ignore_unknown_options": True})
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def status_cmd(args):
+    _status()
+
+
+@cli.command("clear")
+def clear_cmd():
+    _clear()
 
 
 def _list_config(config: Config) -> None:
@@ -410,6 +450,10 @@ def _clear():
         os.killpg(pid, signal.SIGTERM)
     _pidfile_path().unlink(missing_ok=True)
     print(f"cleared keep-alive (pid {pid})")
+
+
+def main():
+    cli(prog_name="keep-alive")
 
 
 if __name__ == "__main__":
