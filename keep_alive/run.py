@@ -6,6 +6,7 @@ import signal
 import sys
 import warnings
 from datetime import datetime, timedelta
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
 import dateparser
@@ -57,6 +58,11 @@ def _parse_args(argv):
     parser = argparse.ArgumentParser(
         prog="keep-alive",
         description="Keep your screen awake until a target time or alias window.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"keep-alive {_pkg_version('keep-screen-alive')}",
     )
     parser.add_argument("input", nargs="*", help="alias name from config, or datetime expression")
     parser.add_argument(

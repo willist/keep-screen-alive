@@ -245,6 +245,13 @@ class TestCorrectFuturePreferenceRegression:
 
 
 class TestParseArgs:
+    def test_version_flag_prints_and_exits(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            run._parse_args(["--version"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        assert "keep-alive" in out
+
     def test_parses_positional_input(self):
         args = run._parse_args(["2h"])
         assert args.input == ["2h"]
