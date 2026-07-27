@@ -6,6 +6,7 @@ import signal
 import sys
 import warnings
 from datetime import datetime, timedelta
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
@@ -200,6 +201,12 @@ class DefaultGroup(click.Group):
         return results
 
 
+try:
+    _VERSION = _pkg_version("keep-screen-alive")
+except PackageNotFoundError:  # not installed (e.g. during build)
+    _VERSION = "0.0.0"
+
+
 @click.group(
     cls=DefaultGroup,
     default="run",
@@ -220,7 +227,7 @@ class DefaultGroup(click.Group):
     help="increase output verbosity (repeat for more: -v, -vv).",
 )
 @click.version_option(
-    version=_pkg_version("keep-screen-alive"),
+    version=_VERSION,
     prog_name="keep-alive",
 )
 @click.pass_context
