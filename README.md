@@ -82,7 +82,7 @@ name = "project"
 
 `keep-alive work` on a weekday between 5am and 4pm keeps awake until 4pm; otherwise for 2h. `keep-alive personal` between 9am and 9pm keeps awake until 9pm; otherwise for 1h. `keep-alive project` keeps awake for 4h unconditionally. Bare `keep-alive` uses global rules.
 
-`keep-alive --list` summarizes the loaded config:
+`keep-alive list` summarizes the loaded config:
 
 ```
 personal

@@ -17,14 +17,25 @@ _PARSER_SETTINGS = {
 }
 
 
+_SUBCOMMANDS = frozenset({"list", "status"})
+
+
 def main():
     args = _parse_args(sys.argv[1:])
     config = _load_config_or_exit(args.config)
-    if args.list:
+    if args.command == "list":
         _list_config(config)
         return
-    if args.status:
+    if args.command == "status":
         _status()
+        return
+    if args.list:
+        print(
+            "warning: --list is deprecated; use 'keep-alive list' instead "
+            "(will be removed in v1.0)",
+            file=sys.stderr,
+        )
+        _list_config(config)
         return
     now = _current_now()
     input_value = " ".join(args.input)
@@ -49,19 +60,35 @@ def _parse_args(argv):
     parser.add_argument(
         "--list",
         action="store_true",
-        help="list configured aliases and exit",
+        help="list configured aliases and exit (deprecated, use 'keep-alive list')",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="resolve and print target without engaging the backend",
     )
-    parser.add_argument(
-        "--status",
-        action="store_true",
-        help="show the in-flight keep-alive target, timing, backend, and pid",
-    )
-    return parser.parse_args(argv)
+
+    command = None
+    filtered = list(argv)
+    i = 0
+    while i < len(filtered):
+        arg = filtered[i]
+        if arg == "--":
+            break
+        if arg.startswith("-"):
+            if arg == "--config" and i + 1 < len(filtered):
+                i += 2
+            else:
+                i += 1
+            continue
+        if arg in _SUBCOMMANDS:
+            command = arg
+            del filtered[i]
+        break
+
+    args = parser.parse_args(filtered)
+    args.command = command
+    return args
 
 
 def _list_config(config: Config) -> None:

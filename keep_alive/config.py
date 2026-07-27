@@ -50,6 +50,9 @@ class ConfigError(Exception):
     """Raised when config loading or validation fails."""
 
 
+RESERVED_NAMES = frozenset({"list", "status", "clear"})
+
+
 def default_config_path() -> Path:
     """Resolve the default config path from $XDG_CONFIG_HOME or ~/.config."""
     xdg = os.environ.get("XDG_CONFIG_HOME")
@@ -88,6 +91,10 @@ def _parse_config(data: dict[str, Any], config_path: Path | None = None) -> Conf
             raise ConfigError(f"alias #{i + 1}: missing 'name'")
         if name in aliases:
             raise ConfigError(f"duplicate alias name '{name}'")
+        if name in RESERVED_NAMES:
+            raise ConfigError(
+                f"alias name '{name}' is reserved (used by a subcommand); choose a different name"
+            )
 
         raw_rules = alias_dict.get("rule", [])
         if not isinstance(raw_rules, list):

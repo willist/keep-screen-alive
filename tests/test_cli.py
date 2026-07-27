@@ -234,6 +234,39 @@ class TestParseArgs:
         args = run._parse_args([])
         assert args.input == []
 
+    def test_list_subcommand_detected(self):
+        args = run._parse_args(["list"])
+        assert args.command == "list"
+
+    def test_status_subcommand_detected(self):
+        args = run._parse_args(["status"])
+        assert args.command == "status"
+
+    def test_subcommand_with_config_flag_before(self):
+        args = run._parse_args(["--config", "/foo.toml", "list"])
+        assert args.command == "list"
+        assert args.config == "/foo.toml"
+
+    def test_subcommand_with_config_flag_after(self):
+        args = run._parse_args(["list", "--config", "/foo.toml"])
+        assert args.command == "list"
+        assert args.config == "/foo.toml"
+
+    def test_non_subcommand_not_detected(self):
+        args = run._parse_args(["work"])
+        assert args.command is None
+        assert args.input == ["work"]
+
+    def test_double_dash_escapes_subcommand(self):
+        args = run._parse_args(["--", "list"])
+        assert args.command is None
+        assert args.input == ["list"]
+
+    def test_deprecated_list_flag_still_parsed(self):
+        args = run._parse_args(["--list"])
+        assert args.list is True
+        assert args.command is None
+
 
 # ---------------------------------------------------------------------
 # main: end-to-end with mocked now, backend, and config
@@ -383,19 +416,17 @@ class TestDryRun:
             self._run_main(monkeypatch, ["--dry-run", "1h"])
         assert "No suitable backend found" in capsys.readouterr().out
 
-    def test_list_takes_precedence_over_dry_run(
+    def test_list_subcommand_dispatches_before_dry_run(
         self, monkeypatch, capsys, mock_now, mock_backend, mock_config_loader
     ):
         mock_config_loader["config"] = Config(
             aliases={"work": [_target_rule("2h")]},
         )
-        self._run_main(monkeypatch, ["--list", "--dry-run"])
+        self._run_main(monkeypatch, ["list", "--dry-run"])
         out = capsys.readouterr().out
-        # --list output present
         assert "work" in out
         assert "for 2h" in out
-        # --dry-run output suppressed
-        assert "target:" not in out
+        assert "target:" not in out  # dry-run output suppressed
         assert not mock_backend.inhibit.called
 
 
@@ -405,8 +436,9 @@ class TestDryRun:
 
 
 class TestStatus:
-    """--status reads the state file and prints what's known about a live
-    keep-alive run. Read-only: never writes, kills, or engages a backend.
+    """status subcommand reads the state file and prints what's known about
+    a live keep-alive run. Read-only: never writes, kills, or engages a
+    backend.
     """
 
     def _run_main(self, monkeypatch, argv):
@@ -426,7 +458,7 @@ class TestStatus:
 
     def test_no_state_file_prints_not_running(self, monkeypatch, capsys, tmp_path):
         self._redirect_state_file(monkeypatch, tmp_path)
-        self._run_main(monkeypatch, ["--status"])
+        self._run_main(monkeypatch, ["status"])
         assert "no keep-alive running" in capsys.readouterr().out
 
     def test_dead_pid_prints_not_running(self, monkeypatch, capsys, tmp_path):
@@ -443,7 +475,7 @@ class TestStatus:
         )
         # _is_our_process returns False (PID is dead or reused).
         monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: False)
-        self._run_main(monkeypatch, ["--status"])
+        self._run_main(monkeypatch, ["status"])
         assert "no keep-alive running" in capsys.readouterr().out
 
     def test_live_prints_six_lines(self, monkeypatch, capsys, tmp_path, mock_now):
@@ -459,7 +491,7 @@ class TestStatus:
             },
         )
         monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: True)
-        self._run_main(monkeypatch, ["--status"])
+        self._run_main(monkeypatch, ["status"])
         out = capsys.readouterr().out
         assert "target: 2h" in out
         assert "start:" in out
@@ -481,7 +513,7 @@ class TestStatus:
 
         fake_result = _subprocess.CompletedProcess(args=[], returncode=0, stdout="caffeinate")
         monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake_result)
-        self._run_main(monkeypatch, ["--status"])
+        self._run_main(monkeypatch, ["status"])
         out = capsys.readouterr().out
         assert "pid: 12345" in out
         assert "(unknown" in out  # missing metadata fields noted
@@ -495,7 +527,7 @@ class TestStatus:
             raise ProcessLookupError()
 
         monkeypatch.setattr("os.kill", raise_lookup)
-        self._run_main(monkeypatch, ["--status"])
+        self._run_main(monkeypatch, ["status"])
         assert "no keep-alive running" in capsys.readouterr().out
 
     def test_legacy_pidfile_with_reused_pid_prints_not_running(self, monkeypatch, capsys, tmp_path):
@@ -507,7 +539,7 @@ class TestStatus:
 
         fake_result = _subprocess.CompletedProcess(args=[], returncode=0, stdout="chrome")
         monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake_result)
-        self._run_main(monkeypatch, ["--status"])
+        self._run_main(monkeypatch, ["status"])
         assert "no keep-alive running" in capsys.readouterr().out
 
     def test_bare_invocation_shows_bare_label(self, monkeypatch, capsys, tmp_path, mock_now):
@@ -523,39 +555,25 @@ class TestStatus:
             },
         )
         monkeypatch.setattr("keep_alive.run._is_our_process", lambda pid, name: True)
-        self._run_main(monkeypatch, ["--status"])
+        self._run_main(monkeypatch, ["status"])
         assert "target: (bare)" in capsys.readouterr().out
 
     def test_status_does_not_engage_backend(
         self, monkeypatch, capsys, tmp_path, mock_backend, mock_config_loader
     ):
         self._redirect_state_file(monkeypatch, tmp_path)
-        self._run_main(monkeypatch, ["--status"])
+        self._run_main(monkeypatch, ["status"])
         assert not mock_backend.inhibit.called
         assert not mock_backend.cleanup.called
 
-    def test_list_takes_precedence_over_status(
-        self, monkeypatch, capsys, tmp_path, mock_backend, mock_config_loader
-    ):
-        self._redirect_state_file(monkeypatch, tmp_path)
-        mock_config_loader["config"] = Config(
-            aliases={"work": [_target_rule("2h")]},
-        )
-        self._run_main(monkeypatch, ["--list", "--status"])
-        out = capsys.readouterr().out
-        assert "work" in out  # --list output
-        assert "for 2h" in out
-        assert "target:" not in out  # --status output suppressed
-        assert "no keep-alive running" not in out
-
-    def test_status_takes_precedence_over_dry_run(
+    def test_status_dispatches_before_dry_run(
         self, monkeypatch, capsys, tmp_path, mock_now, mock_backend, mock_config_loader
     ):
         self._redirect_state_file(monkeypatch, tmp_path)
-        self._run_main(monkeypatch, ["--status", "--dry-run", "2h"])
+        self._run_main(monkeypatch, ["status", "--dry-run", "2h"])
         out = capsys.readouterr().out
-        assert "no keep-alive running" in out  # --status output
-        assert "Keeping alive" not in out  # --dry-run output suppressed
+        assert "no keep-alive running" in out  # status output
+        assert "Keeping alive" not in out  # backend never reached
 
 
 # ---------------------------------------------------------------------
@@ -604,14 +622,16 @@ class TestList:
         monkeypatch.setattr("sys.argv", ["keep-alive", *argv])
         run.main()
 
-    def test_list_with_empty_config(self, monkeypatch, capsys, mock_backend, mock_config_loader):
+    def test_list_subcommand_with_empty_config(
+        self, monkeypatch, capsys, mock_backend, mock_config_loader
+    ):
         mock_config_loader["config"] = Config()
-        self._run_main(monkeypatch, ["--list"])
+        self._run_main(monkeypatch, ["list"])
         out = capsys.readouterr().out
         assert out.strip() == "global"
         assert not mock_backend.inhibit.called
 
-    def test_list_with_multiple_aliases(
+    def test_list_subcommand_with_multiple_aliases(
         self, monkeypatch, capsys, mock_backend, mock_config_loader
     ):
         mock_config_loader["config"] = Config(
@@ -644,10 +664,8 @@ class TestList:
                 )
             ],
         )
-        self._run_main(monkeypatch, ["--list"])
+        self._run_main(monkeypatch, ["list"])
         out = capsys.readouterr().out
-        # Aliases sorted alphabetically, global last. Each rule summarizes
-        # its condition and action on one indented line.
         expected = (
             "personal\n"
             "  05:00-19:00 → at 16:00\n"
@@ -660,27 +678,54 @@ class TestList:
         assert out.strip() == expected
         assert not mock_backend.inhibit.called
 
-    def test_list_respects_config_flag(self, monkeypatch, capsys, mock_backend, mock_now, tmp_path):
+    def test_list_subcommand_respects_config_flag(
+        self, monkeypatch, capsys, mock_backend, mock_now, tmp_path
+    ):
         config_file = tmp_path / "test.toml"
         config_file.write_text('[[alias]]\nname = "fromfile"\n[[alias.rule]]\ntarget = "30m"\n')
-        monkeypatch.setattr("sys.argv", ["keep-alive", "--list", "--config", str(config_file)])
+        monkeypatch.setattr("sys.argv", ["keep-alive", "list", "--config", str(config_file)])
         run.main()
         out = capsys.readouterr().out
         assert "fromfile" in out
         assert "for 30m" in out
 
-    def test_list_takes_precedence_over_input(
+    def test_list_subcommand_ignores_positional_input(
         self, monkeypatch, capsys, mock_backend, mock_config_loader
     ):
-        # --list with a positional input should list, not resolve
         mock_config_loader["config"] = Config(
             aliases={"work": [_target_rule("2h")]},
         )
-        self._run_main(monkeypatch, ["--list", "work"])
+        self._run_main(monkeypatch, ["list", "work"])
         out = capsys.readouterr().out
         assert "work" in out
         assert "for 2h" in out
         assert not mock_backend.inhibit.called
+
+    def test_deprecated_list_flag_still_works(
+        self, monkeypatch, capsys, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config()
+        self._run_main(monkeypatch, ["--list"])
+        out = capsys.readouterr().out
+        assert out.strip() == "global"
+        assert not mock_backend.inhibit.called
+
+    def test_deprecated_list_flag_prints_warning_to_stderr(
+        self, monkeypatch, capsys, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config()
+        self._run_main(monkeypatch, ["--list"])
+        err = capsys.readouterr().err
+        assert "deprecated" in err
+        assert "keep-alive list" in err
+
+    def test_list_subcommand_no_deprecation_warning(
+        self, monkeypatch, capsys, mock_backend, mock_config_loader
+    ):
+        mock_config_loader["config"] = Config()
+        self._run_main(monkeypatch, ["list"])
+        err = capsys.readouterr().err
+        assert err == ""
 
 
 class TestListFormatting:

@@ -119,6 +119,21 @@ class TestAliasErrors:
         with pytest.raises(ConfigError, match="duplicate alias name 'x'"):
             load_config(p)
 
+    def test_reserved_name_list_rejected(self, tmp_path):
+        p = _write(tmp_path, '[[alias]]\nname = "list"\n[[alias.rule]]\ntarget = "2h"\n')
+        with pytest.raises(ConfigError, match="reserved"):
+            load_config(p)
+
+    def test_reserved_name_status_rejected(self, tmp_path):
+        p = _write(tmp_path, '[[alias]]\nname = "status"\n[[alias.rule]]\ntarget = "2h"\n')
+        with pytest.raises(ConfigError, match="reserved"):
+            load_config(p)
+
+    def test_reserved_name_clear_rejected(self, tmp_path):
+        p = _write(tmp_path, '[[alias]]\nname = "clear"\n[[alias.rule]]\ntarget = "2h"\n')
+        with pytest.raises(ConfigError, match="reserved"):
+            load_config(p)
+
 
 class TestRuleErrors:
     def test_rule_missing_target(self, tmp_path):
