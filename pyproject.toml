@@ -1,11 +1,11 @@
-[tool.poetry]
+[project]
 name = "keep-screen-alive"
 version = "0.4.0"
 description = "A cross-platform tool to keep your screen awake using a relative datetime"
-authors = ["Tim Willis"]
+authors = [{name = "Tim Willis"}]
 license = "MIT"
 readme = "README.md"
-packages = [{include = "keep_alive"}]
+requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -19,27 +19,30 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
 ]
+dependencies = [
+    "dateparser>=1.1.8",
+    "six>=1.16.0",
+]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-dateparser = "^1.1.8"
-six = "^1.16.0"
-PyGObject = {version = ">=3.42", markers = "sys_platform == 'linux'", optional = true}
+[project.optional-dependencies]
+dbus = ["PyGObject>=3.42; sys_platform == 'linux'"]
 
-[tool.poetry.extras]
-dbus = ["PyGObject"]
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^9.1.1"
-ruff = ">=0.15.22,<0.17.0"
-mypy = ">=1.18,<3.0"
-pip-audit = "^2.9"
-pre-commit = "^4.3"
-types-dateparser = "^1.2"
-
-[tool.poetry.scripts]
+[project.scripts]
 keep-alive = "keep_alive.run:main"
 dbus-inhibit = "keep_alive.dbus_inhibit:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.15.22,<0.17.0",
+    "mypy>=1.18,<3.0",
+    "pip-audit>=2.9",
+    "pre-commit>=4.3",
+    "types-dateparser>=1.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["keep_alive"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -70,5 +73,5 @@ module = ["gi", "gi.repository.*"]
 ignore_missing_imports = true
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
