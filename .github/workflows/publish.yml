@@ -14,14 +14,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          token: ${{ secrets.PUBLISH_TOKEN }}
           ref: main
           fetch-depth: 0
 
       - name: Install Poetry
         run: pip install poetry
-
-      - name: Install dependencies
-        run: poetry install --no-interaction
 
       - name: Extract version from tag
         id: version
