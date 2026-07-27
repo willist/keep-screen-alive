@@ -278,8 +278,112 @@ class TestDefaultGroup:
 
 
 # ---------------------------------------------------------------------
-# main: end-to-end with mocked now, backend, and config
+# Shell completion
 # ---------------------------------------------------------------------
+
+
+class TestShellCompletion:
+    """Shell completion via click's built-in shell_completion module."""
+
+    @staticmethod
+    def _get_completions(monkeypatch, comp_words, comp_cword):
+        from click.shell_completion import BashComplete
+
+        monkeypatch.setenv("COMP_WORDS", comp_words)
+        monkeypatch.setenv("COMP_CWORD", str(comp_cword))
+        comp = BashComplete(run.cli, {}, "keep-alive", "_KEEP_ALIVE_COMPLETE")
+        args, incomplete = comp.get_completion_args()
+        return comp.get_completions(args, incomplete)
+
+    @staticmethod
+    def _write_config(tmp_path):
+        config_dir = tmp_path / "keep-alive"
+        config_dir.mkdir()
+        (config_dir / "config.toml").write_text(
+            '[[alias]]\nname = "work"\n[[alias.rule]]\ntarget = "5pm"\n'
+            '[[alias]]\nname = "personal"\n[[alias.rule]]\ntarget = "30m"\n'
+        )
+
+    def test_zsh_source_produces_completion_script(self):
+        from click.shell_completion import ZshComplete
+
+        comp = ZshComplete(run.cli, {}, "keep-alive", "_KEEP_ALIVE_COMPLETE")
+        script = comp.source()
+        assert "_keep_alive_completion" in script
+        assert "compdef" in script
+
+    def test_bash_source_produces_completion_script(self):
+        from click.shell_completion import BashComplete
+
+        comp = BashComplete(run.cli, {}, "keep-alive", "_KEEP_ALIVE_COMPLETE")
+        script = comp.source()
+        assert "_keep_alive_completion" in script
+        assert "COMP_WORDS" in script
+
+    def test_fish_source_produces_completion_script(self):
+        from click.shell_completion import FishComplete
+
+        comp = FishComplete(run.cli, {}, "keep-alive", "_KEEP_ALIVE_COMPLETE")
+        script = comp.source()
+        assert "keep-alive" in script
+
+    def test_subcommand_completion(self, monkeypatch):
+        completions = self._get_completions(monkeypatch, "keep-alive li", 1)
+        names = [c.value for c in completions]
+        assert "list" in names
+
+    def test_all_subcommands_complete_on_empty(self, monkeypatch):
+        completions = self._get_completions(monkeypatch, "keep-alive ", 1)
+        names = [c.value for c in completions]
+        assert "run" in names
+        assert "list" in names
+        assert "status" in names
+        assert "clear" in names
+
+    def test_alias_completion_at_group_level(self, monkeypatch, tmp_path):
+        self._write_config(tmp_path)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        completions = self._get_completions(monkeypatch, "keep-alive ", 1)
+        names = [c.value for c in completions]
+        assert "work" in names
+        assert "personal" in names
+
+    def test_alias_completion_at_run_level(self, monkeypatch, tmp_path):
+        self._write_config(tmp_path)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        completions = self._get_completions(monkeypatch, "keep-alive run wo", 2)
+        names = [c.value for c in completions]
+        assert names == ["work"]
+
+    def test_completion_does_not_crash_with_missing_config(self, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", "/nonexistent/path/xyz")
+        completions = self._get_completions(monkeypatch, "keep-alive ", 1)
+        names = [c.value for c in completions]
+        assert "list" in names
+
+    def test_complete_aliases_returns_matching_names(self, monkeypatch):
+        config = Config(
+            aliases={
+                "work": [_target_rule("2h")],
+                "personal": [_target_rule("30m")],
+            }
+        )
+        monkeypatch.setattr("keep_alive.run.load_config", lambda path=None: config)
+        ctx = MagicMock()
+        ctx.params = {}
+        ctx.parent = None
+        result = run._complete_aliases(ctx, None, "wo")
+        assert [c.value for c in result] == ["work"]
+
+    def test_complete_aliases_returns_empty_on_config_error(self, monkeypatch):
+        def raise_error(path=None):
+            raise ConfigError("bad config")
+
+        monkeypatch.setattr("keep_alive.run.load_config", raise_error)
+        ctx = MagicMock()
+        ctx.params = {}
+        ctx.parent = None
+        assert run._complete_aliases(ctx, None, "anything") == []
 
 
 class TestMain:

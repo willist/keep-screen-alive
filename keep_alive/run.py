@@ -10,6 +10,7 @@ from pathlib import Path
 
 import click
 import dateparser
+from click.shell_completion import CompletionItem
 
 from keep_alive.backends import _pidfile_path, _read_state, get_backend
 from keep_alive.config import Config, ConfigError, load_config
@@ -19,6 +20,25 @@ _PARSER_SETTINGS = {
     "PREFER_DATES_FROM": "future",
     "RETURN_AS_TIMEZONE_AWARE": True,
 }
+
+
+def _load_config_safe(ctx):
+    """Load config during shell completion without exiting on error."""
+    try:
+        config_path = ctx.params.get("config_path")
+        if config_path is None and ctx.parent:
+            config_path = ctx.parent.params.get("config_path")
+        return load_config(Path(config_path) if config_path else None)
+    except Exception:
+        return None
+
+
+def _complete_aliases(ctx, param, incomplete):
+    """Return alias names from config as completion suggestions."""
+    config = _load_config_safe(ctx)
+    if config is None:
+        return []
+    return [CompletionItem(name) for name in sorted(config.aliases) if name.startswith(incomplete)]
 
 
 class DefaultGroup(click.Group):
@@ -34,6 +54,8 @@ class DefaultGroup(click.Group):
         super().__init__(*args, **kwargs)
 
     def parse_args(self, ctx, args):
+        if ctx.resilient_parsing:
+            return super().parse_args(ctx, args)
         args = list(args)
         i = 0
         while i < len(args):
@@ -54,6 +76,17 @@ class DefaultGroup(click.Group):
             if not args or not any(a in ("--version", "--help", "-h") for a in args):
                 args.insert(0, self.default_cmd_name)
         return super().parse_args(ctx, args)
+
+    def shell_complete(self, ctx, incomplete):
+        results = super().shell_complete(ctx, incomplete)
+        config = _load_config_safe(ctx)
+        if config:
+            results.extend(
+                CompletionItem(name)
+                for name in sorted(config.aliases)
+                if name.startswith(incomplete)
+            )
+        return results
 
 
 @click.group(
@@ -96,7 +129,7 @@ def cli(ctx, config_path):
     hidden=True,
     help="list configured aliases and exit (deprecated, use 'keep-alive list')",
 )
-@click.argument("input", nargs=-1)
+@click.argument("input", nargs=-1, shell_complete=_complete_aliases)
 @click.pass_context
 def run_cmd(ctx, config_path, dry_run, list_flag, input):
     config = _load_config_or_exit(config_path if config_path is not None else ctx.obj.get("config"))
