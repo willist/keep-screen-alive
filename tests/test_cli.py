@@ -1321,3 +1321,60 @@ class TestInstall:
         self._run_main(monkeypatch, ["install", "--completions-only"])
         out = capsys.readouterr().out
         assert "no shells selected" in out
+
+
+# ---------------------------------------------------------------------
+# check command
+# ---------------------------------------------------------------------
+
+
+class TestCheck:
+    """check validates the config and prints a summary or errors."""
+
+    def _run_main(self, monkeypatch, argv):
+        run.cli.main(args=argv, prog_name="keep-alive", standalone_mode=False)
+
+    def test_valid_config_prints_summary(self, monkeypatch, capsys, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[[rule]]\ntarget = "30m"\n')
+        self._run_main(monkeypatch, ["check", "--config", str(config_path)])
+        out = capsys.readouterr().out
+        assert "config OK" in out
+        assert "for 30m" in out
+
+    def test_valid_config_with_aliases(self, monkeypatch, capsys, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[[alias]]\nname = "work"\n[[alias.rule]]\ntarget = "2h"\n')
+        self._run_main(monkeypatch, ["check", "--config", str(config_path)])
+        out = capsys.readouterr().out
+        assert "config OK" in out
+        assert "work" in out
+        assert "for 2h" in out
+
+    def test_invalid_config_exits_nonzero(self, monkeypatch, capsys, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("[[rule]]\n")
+        with pytest.raises(SystemExit) as exc:
+            self._run_main(monkeypatch, ["check", "--config", str(config_path)])
+        assert exc.value.code != 0
+        out = capsys.readouterr().out
+        assert "config error" in out
+
+    def test_no_config_file(self, monkeypatch, capsys, tmp_path):
+        config_path = tmp_path / "config.toml"
+        self._run_main(monkeypatch, ["check", "--config", str(config_path)])
+        out = capsys.readouterr().out
+        assert "no config file found" in out
+
+    def test_empty_config(self, monkeypatch, capsys, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+        self._run_main(monkeypatch, ["check", "--config", str(config_path)])
+        out = capsys.readouterr().out
+        assert "config OK" in out
+        assert "empty" in out
+
+    def test_check_in_reserved_names(self):
+        from keep_alive.config import RESERVED_NAMES
+
+        assert "check" in RESERVED_NAMES

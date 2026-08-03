@@ -50,7 +50,7 @@ class ConfigError(Exception):
     """Raised when config loading or validation fails."""
 
 
-RESERVED_NAMES = frozenset({"list", "status", "clear", "install"})
+RESERVED_NAMES = frozenset({"list", "status", "clear", "install", "check"})
 
 
 def default_config_path() -> Path:

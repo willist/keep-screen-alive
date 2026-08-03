@@ -15,7 +15,7 @@ import dateparser
 from click.shell_completion import CompletionItem
 
 from keep_alive.backends import _pidfile_path, _read_state, get_backend
-from keep_alive.config import Config, ConfigError, load_config
+from keep_alive.config import Config, ConfigError, default_config_path, load_config
 from keep_alive.rules import combine, evaluate
 
 logger = logging.getLogger("keep_alive")
@@ -350,6 +350,20 @@ def clear_cmd():
 
 
 @cli.command(
+    "check",
+    help="Validate the config file and print a summary.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    help="path to config file (default: $XDG_CONFIG_HOME/keep-alive/config.toml)",
+)
+def check_cmd(config_path):
+    _check_config(config_path)
+
+
+@cli.command(
     "install",
     help="Create a default config file and install shell completions.",
 )
@@ -460,6 +474,24 @@ def _load_config_or_exit(path: str | None) -> Config:
     except ConfigError as e:
         print(f"config error: {e}")
         sys.exit(1)
+
+
+def _check_config(path: str | None) -> None:
+    """Validate the config and print a summary, or errors on failure."""
+    config_path = Path(path) if path else default_config_path()
+    if not config_path.exists():
+        print(f"no config file found at {config_path}")
+        return
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        print(f"config error: {e}")
+        sys.exit(1)
+    if not config.aliases and not config.global_rules:
+        print(f"config OK (empty — no aliases or rules) at {config_path}")
+        return
+    print(f"config OK at {config_path}")
+    _list_config(config)
 
 
 def _current_now():
